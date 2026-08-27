@@ -5,3 +5,5 @@
 # Scratch output from manual CLI runs
 /out
 /scratch
+/dist
+/target/debian

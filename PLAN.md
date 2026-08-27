@@ -201,7 +201,7 @@ geometry across a mixed A4/Letter merge, and a non-ASCII title round trip.
 
 ---
 
-### Stage 2 — Rendering
+### Stage 2 — Rendering — **done**
 
 **Goal:** turn pages into pixels.
 
@@ -234,7 +234,7 @@ non-blank image of the expected pixel dimensions, and a cold `cargo build
 
 ---
 
-### Stage 3 — Compression
+### Stage 3 — Compression — **done**
 
 **Goal:** real size reduction, with honest quality levels.
 
@@ -260,7 +260,7 @@ by the pass.
 
 ---
 
-### Stage 4 — Conversions
+### Stage 4 — Conversions — **done**
 
 **Goal:** in and out of other formats.
 
@@ -296,7 +296,7 @@ handles mixed orientations; two concurrent `from-office` calls both succeed.
 
 ---
 
-### Stage 5 — OCR
+### Stage 5 — OCR — **done**
 
 **Goal:** searchable text over scanned pages.
 
@@ -328,7 +328,7 @@ while looking visually unchanged.
 
 ---
 
-### Stage 6 — GTK4 GUI
+### Stage 6 — GTK4 GUI — **done**
 
 **Goal:** the core is proven; put a window on it.
 
@@ -352,7 +352,7 @@ saves correctly.
 
 ---
 
-### Stage 7 — Packaging
+### Stage 7 — Packaging — **done**
 
 1. `.deb` via `cargo-deb` (`cargo install cargo-deb`), declaring runtime
    dependencies on `libreoffice` and `tesseract-ocr` as *recommends*, not
@@ -376,8 +376,54 @@ saves correctly.
 - Version the CLI surface: the GUI in stage 6 depends on `pdf-core` directly, not
   on shelling out to the CLI.
 
-## Immediate next step
+## Every stage is built
 
-Stage 2: add the `render` feature and `mupdf-rs`, then `foolscap render` and
-`foolscap thumbnail`, with the `(page, dpi)` render cache in place from the
-start.
+All seven stages are implemented, with 217 tests passing and
+`clippy -D warnings` clean across every feature combination.
+
+### What the plan got wrong
+
+Recorded because the corrections are more useful than the original guesses.
+
+- **The MuPDF build is cheap here, not expensive.** With default features off it
+  compiles in about twenty seconds, and needs neither `cmake` nor `libclang-dev`:
+  `mupdf-sys` drives its vendored sources with `make`, and `bindgen` finds the
+  `libclang-18` shared object Ubuntu already ships. The plan budgeted ten to
+  twenty minutes and two extra packages.
+- **Compression needs no raster backend.** Image XObjects can be decoded and
+  resampled with the `image` crate alone, so `compress` works in a default
+  build rather than requiring `render`.
+- **`lopdf` loads encrypted PDFs quite happily** and hands back ciphertext, so
+  the check has to happen after loading rather than instead of it.
+- **LibreOffice cannot convert a PDF to plain text.** Its Writer PDF import puts
+  text in frames that the plain-text exporter ignores, producing an empty file.
+  Text extraction goes through MuPDF instead, and `txt` is not offered as a
+  conversion target.
+- **Pages must be rendered without an alpha channel.** With one, unmarked areas
+  come back transparent and a page reads as floating ink rather than paper.
+
+### What the plan did not anticipate
+
+- **`assemble`**, one page-tree rebuilder shared by merge, split, extraction,
+  reordering and deletion, including materialising inherited attributes so that
+  repointing a page at a new parent does not silently resize it.
+- **Content-stream interpretation**, needed to know the size an image is
+  actually drawn at before deciding whether it is oversampled.
+- **A text-layer graft**, so OCR leaves the original scan untouched.
+- **`split_plan` and `convert::plan`**, so the CLI can refuse to overwrite
+  before it has already done so.
+
+## Where to go next
+
+Nothing in the original plan is outstanding. The obvious next pieces, in rough
+order of value:
+
+1. **Password handling.** Encrypted documents are refused by name; accepting a
+   password and calling `lopdf`'s `decrypt` would open a common category of
+   file that currently cannot be touched at all.
+2. **Predictor support in `compress`.** Flate images with a PNG predictor are
+   skipped, which leaves some documents shrinking less than they could.
+3. **Tesseract inside the Flatpak**, so OCR works there as it does in the `.deb`.
+4. **A page-thumbnail cache on disk**, so reopening a large document is instant.
+5. **Undo in the GUI.** Edits are already a plain value; keeping a stack of them
+   is most of the work.

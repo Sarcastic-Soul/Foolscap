@@ -19,34 +19,60 @@ the logic, consumed by a CLI now and a GTK4 desktop application later.
 belongs in which stage — read it before adding a feature, and update it when
 scope changes.
 
-Current state: stage 1 is complete. Stage 2 (rendering) is next.
+Current state: all seven planned stages are built. 217 tests pass and
+`clippy -D warnings` is clean across every feature combination.
 
 ## Commands
 
 ```sh
-cargo build
-cargo run -p foolscap-cli -- <subcommand>     # binary is named `foolscap`
-cargo test
-cargo test -p pdf-core pages::                # a single module's tests
-cargo test --test integration -- merge        # a single integration test by name
+# The features are off by default, so most work wants them on.
+ALL=--features foolscap-cli/full,pdf-core/render,pdf-core/convert,pdf-core/ocr
+
+cargo build $ALL
+cargo run -p foolscap-cli --features full -- <subcommand>   # binary: `foolscap`
+cargo run -p foolscap-gui                                   # the GTK4 app
+cargo test --workspace $ALL
+cargo test -p pdf-core pages::                # one module's unit tests
+cargo test -p pdf-core --test compress        # one integration test file
+cargo test -p pdf-core --test ocr --features ocr -- --nocapture
 cargo fmt
-cargo clippy --all-targets -- -D warnings     # must be clean before every commit
+cargo clippy --all-targets --workspace $ALL -- -D warnings   # clean before every commit
+
+./packaging/build-deb.sh                      # produces target/debian/*.deb
 ```
 
 Cargo lives at `~/.cargo/bin`; non-login shells may need `. "$HOME/.cargo/env"`
-first.
+first. Building `mupdf-sys` needs `LIBCLANG_PATH=/usr/lib/x86_64-linux-gnu` on
+this host, because `libclang-dev` is not installed and `bindgen` will not find
+the versioned `libclang-18.so.1` on its own.
+
+Tests that need LibreOffice or Tesseract skip themselves when the tool is
+absent, printing why, rather than failing.
+
+Verifying the GUI headlessly needs an explicit backend, or the window is created
+but never mapped:
+
+```sh
+env -u WAYLAND_DISPLAY xvfb-run -a --server-args="-screen 0 1280x900x24" \
+    bash -c 'GDK_BACKEND=x11 GSK_RENDERER=cairo ./target/debug/foolscap-gui file.pdf & \
+             sleep 8; xwd -root -silent > shot.xwd; pkill foolscap-gui'
+ffmpeg -i shot.xwd shot.png
+```
 
 ## Optional features
 
-Three capabilities are behind non-default Cargo features. This is deliberate:
-`render` pulls in `mupdf-rs`, which vendors and builds the MuPDF C sources and
-turns a seconds-long build into a ten-to-twenty-minute one. Keeping it opt-in is
-what makes ordinary development and CI fast. Do not promote any of these to
-`default`.
+Three capabilities are behind non-default Cargo features, so that a minimal
+build has no C toolchain requirement and no external tools. `ocr` implies
+`render`, because pages are rasterised before they are recognised. Do not
+promote any of these to `default`.
+
+`mupdf` is taken with `default-features = false`, which matters more than it
+looks: the default set builds JavaScript, EPUB, HTML and Tesseract support into
+MuPDF and turns a twenty-second build into a very long one.
 
 | Feature | Adds | External requirement |
 |---|---|---|
-| `render` | Page rendering, thumbnails (MuPDF) | `clang`, `libclang-dev`, `cmake` at build time |
+| `render` | Page rendering, thumbnails, text extraction (MuPDF) | `clang` at build time; see `LIBCLANG_PATH` above |
 | `convert` | Image and Office conversion | LibreOffice on `PATH` at run time |
 | `ocr` | Text recognition | Tesseract on `PATH` at run time |
 
@@ -114,6 +140,16 @@ subtracting one inline — off-by-one errors here corrupt output silently.
   those onto each page first. Everything that rebuilds a page tree must go
   through `crates/pdf-core/src/assemble.rs` rather than reinventing it.
 - Headless LibreOffice collides with itself on concurrent invocations unless
-  each call gets an isolated profile via `-env:UserInstallation=`.
-- A render cache keyed by `(page, dpi)` is cheap to add in stage 2 and painful to
-  retrofit once the GUI is scrolling a document.
+  each call gets an isolated profile via `-env:UserInstallation=`. It also needs
+  `--infilter=writer_pdf_import` to convert *from* a PDF, and exits zero having
+  written nothing when it is missing — so the absence of the output file, not
+  the exit status, is the real error signal.
+- LibreOffice cannot export a PDF to plain text: its PDF import puts text in
+  frames the plain-text exporter ignores. Text extraction goes through MuPDF.
+- Pages are rendered without an alpha channel. With one, unmarked areas come
+  back transparent and a page reads as floating ink rather than paper.
+- In the GUI, do not reach a child widget by walking the tree from its parent.
+  That lookup depends on the exact nesting and fails silently when the nesting
+  is not what you assumed; hold the widgets in a list instead.
+- MuPDF's context is thread-local, so a `PageRenderer` belongs to the thread
+  that made it. The GUI keeps one on its worker thread and never shares it.

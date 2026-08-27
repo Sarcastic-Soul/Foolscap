@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Foolscap
+GenericName=PDF Toolkit
+Comment=Merge, split, rotate, compress and recognise text in PDF documents
+Exec=foolscap-gui %f
+Icon=foolscap
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/pdf;
+Keywords=PDF;merge;split;rotate;compress;OCR;scan;
+StartupNotify=true
+StartupWMClass=foolscap-gui

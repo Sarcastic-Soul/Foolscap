@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Foolscap</title>
+  <!-- A sheet of foolscap with a turned corner, over a second sheet. -->
+  <g fill="none" fill-rule="evenodd">
+    <rect x="8" y="10" width="36" height="46" rx="3" fill="#b9c2cf"/>
+    <path d="M14 4h26l14 14v38a3 3 0 0 1-3 3H14a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z" fill="#f7f9fc"/>
+    <path d="M40 4l14 14H43a3 3 0 0 1-3-3V4z" fill="#c8d2e0"/>
+    <g stroke="#5b6b82" stroke-width="2" stroke-linecap="round">
+      <path d="M19 26h26"/>
+      <path d="M19 34h26"/>
+      <path d="M19 42h17"/>
+    </g>
+  </g>
+</svg>

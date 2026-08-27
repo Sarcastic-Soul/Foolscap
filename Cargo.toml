@@ -20,12 +20,15 @@ flate2 = "1"
 # v4_10 for FileDialog, which replaced the deprecated FileChooserNative.
 gtk4 = { version = "0.11", features = ["v4_10"] }
 async-channel = "2"
+clap_mangen = "0.2"
+clap_complete = "4"
 printpdf = { version = "0.12", default-features = false, features = ["jpeg", "png"] }
 thiserror = "2"
 tracing = "0.1"
 
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+# "string" lets the asset generator name subcommand man pages at run time.
+clap = { version = "4", features = ["derive", "string"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]

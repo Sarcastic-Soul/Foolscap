@@ -1,12 +1,16 @@
 [package]
 name = "foolscap-cli"
-description = "Command-line interface for the Foolscap PDF toolkit."
+description = "A Linux-first PDF toolkit: merge, split, compress, convert and recognise text."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+
+[lib]
+name = "foolscap_cli"
+path = "src/lib.rs"
 
 [[bin]]
 name = "foolscap"
@@ -19,6 +23,10 @@ convert = ["pdf-core/convert"]
 ocr = ["pdf-core/ocr", "render"]
 full = ["render", "convert", "ocr"]
 
+[dev-dependencies]
+clap_complete.workspace = true
+clap_mangen.workspace = true
+
 [dependencies]
 pdf-core.workspace = true
 image = { workspace = true, optional = true, features = ["png"] }
@@ -27,3 +35,34 @@ anyhow.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# One package carries both binaries: they are the same tool with two front
+# ends, and splitting them would only make the desktop entry depend on a
+# separate package to be useful.
+[package.metadata.deb]
+name = "foolscap"
+maintainer = "Anish Kumar <anishisbusy@gmail.com>"
+copyright = "2026, Anish Kumar"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+A Linux-first PDF toolkit. Merge, split, rotate, reorder and delete pages,
+shrink documents by resampling their images, convert to and from images and
+office formats, and add a searchable text layer to scans. Ships a command-line
+tool and a GTK4 desktop application over one shared library."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/foolscap", "usr/bin/", "755"],
+    ["target/release/foolscap-gui", "usr/bin/", "755"],
+    ["../../packaging/foolscap.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/foolscap.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["../../dist/man/*.1", "usr/share/man/man1/", "644"],
+    ["../../dist/completions/foolscap.bash", "usr/share/bash-completion/completions/foolscap", "644"],
+    ["../../dist/completions/_foolscap", "usr/share/zsh/vendor-completions/", "644"],
+    ["../../dist/completions/foolscap.fish", "usr/share/fish/vendor_completions.d/", "644"],
+    ["../../README.md", "usr/share/doc/foolscap/README.md", "644"],
+]
+# Recommends rather than Depends: without these the tool still does most of
+# what it does, just with fewer commands, and forcing a LibreOffice install on
+# someone who only wants to merge two files would be rude.
+recommends = "libreoffice, tesseract-ocr, tesseract-ocr-eng"

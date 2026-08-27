@@ -1,0 +1,56 @@
+# Flatpak manifest for Foolscap.
+#
+# The point of shipping a Flatpak as well as a .deb is that everything Foolscap
+# links against — GTK4, and MuPDF built from the vendored sources — comes from
+# the runtime and the build, not from whatever the host distribution happens to
+# carry. Fedora, Arch and Debian then all get the same behaviour.
+#
+# Build with:
+#   flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47 \
+#       org.freedesktop.Sdk.Extension.rust-stable//24.08
+#   flatpak-builder --user --install --force-clean build-dir \
+#       packaging/flatpak/com.github.sarcastic_soul.Foolscap.yml
+
+app-id: com.github.sarcastic_soul.Foolscap
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: foolscap-gui
+
+finish-args:
+  # Documents are opened through the file chooser portal, so no blanket
+  # filesystem access is needed.
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-documents
+  - --filesystem=xdg-download
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/foolscap/cargo
+
+modules:
+  # LibreOffice and Tesseract are invoked as subprocesses. Inside a Flatpak
+  # they are not on PATH, so the office and OCR commands report them as
+  # missing rather than failing obscurely. Bundling LibreOffice would multiply
+  # the download size; the intent is to add Tesseract as a module here.
+  - name: foolscap
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml
+      - cargo --offline build --release -p foolscap-cli --features render,convert,ocr
+      - cargo --offline build --release -p foolscap-gui
+      - install -Dm755 target/release/foolscap /app/bin/foolscap
+      - install -Dm755 target/release/foolscap-gui /app/bin/foolscap-gui
+      - install -Dm644 packaging/foolscap.desktop
+        /app/share/applications/com.github.sarcastic_soul.Foolscap.desktop
+      - install -Dm644 packaging/foolscap.svg
+        /app/share/icons/hicolor/scalable/apps/com.github.sarcastic_soul.Foolscap.svg
+    sources:
+      - type: dir
+        path: ../..

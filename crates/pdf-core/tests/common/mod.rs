@@ -387,3 +387,128 @@ pub fn image_summaries(path: &Path) -> Vec<(u32, u32, usize)> {
         })
         .collect()
 }
+
+/// A one-page A4 document showing `words` at the given size, using a base-14
+/// font so that it renders anywhere.
+pub fn build_text_page(words: &str, size: f32) -> Document {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+    let resources_id = doc.add_object(dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+    });
+
+    let content = Content {
+        operations: vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), size.into()]),
+            Operation::new("Td", vec![72.into(), 600.into()]),
+            Operation::new("Tj", vec![Object::string_literal(words)]),
+            Operation::new("ET", vec![]),
+        ],
+    };
+    let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id,
+        "Resources" => resources_id,
+        "MediaBox" => vec![0.into(), 0.into(), A4.0.into(), A4.1.into()],
+    });
+
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Count" => 1,
+            "Kids" => vec![page_id.into()],
+        }),
+    );
+
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    doc
+}
+
+/// A one-page document whose only content is the supplied JPEG.
+pub fn build_with_jpeg(
+    jpeg: Vec<u8>,
+    pixel_width: u32,
+    pixel_height: u32,
+    placement: ImagePlacement,
+) -> Document {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let image_id = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => pixel_width as i64,
+            "Height" => pixel_height as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+            "Filter" => "DCTDecode",
+        },
+        jpeg,
+    ));
+
+    let resources_id = doc.add_object(dictionary! {
+        "XObject" => dictionary! { "Im1" => image_id },
+    });
+
+    let content = Content {
+        operations: vec![
+            Operation::new("q", vec![]),
+            Operation::new(
+                "cm",
+                vec![
+                    placement.width.into(),
+                    0.into(),
+                    0.into(),
+                    placement.height.into(),
+                    0.into(),
+                    0.into(),
+                ],
+            ),
+            Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+            Operation::new("Q", vec![]),
+        ],
+    };
+    let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id,
+        "Resources" => resources_id,
+        "MediaBox" => vec![0.into(), 0.into(), A4.0.into(), A4.1.into()],
+    });
+
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Count" => 1,
+            "Kids" => vec![page_id.into()],
+        }),
+    );
+
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    doc
+}

@@ -60,6 +60,37 @@ pub fn print_capabilities() {
     println!("render     {}", mark(caps.render));
     println!("convert    {}", mark(caps.convert));
     println!("ocr        {}", mark(caps.ocr));
+
+    // Compiled in is not the same as usable: both of these shell out, and a
+    // build with the feature on but the tool absent can do nothing. Say so here
+    // rather than at the end of a long conversion.
+    #[cfg(feature = "convert")]
+    println!(
+        "  LibreOffice  {}",
+        if pdf_core::convert::office::is_available() {
+            "found"
+        } else {
+            "not installed"
+        }
+    );
+
+    #[cfg(feature = "ocr")]
+    {
+        println!(
+            "  Tesseract    {}",
+            if pdf_core::ocr::is_available() {
+                "found"
+            } else {
+                "not installed"
+            }
+        );
+
+        if let Ok(languages) = pdf_core::ocr::languages() {
+            if !languages.is_empty() {
+                println!("  languages    {}", languages.join(", "));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

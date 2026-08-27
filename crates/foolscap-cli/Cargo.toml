@@ -16,7 +16,7 @@ path = "src/main.rs"
 default = []
 render = ["pdf-core/render", "dep:image"]
 convert = ["pdf-core/convert"]
-ocr = ["pdf-core/ocr"]
+ocr = ["pdf-core/ocr", "render"]
 full = ["render", "convert", "ocr"]
 
 [dependencies]

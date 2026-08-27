@@ -148,6 +148,7 @@ fn is_executable(path: &std::path::Path) -> bool {
 }
 
 /// LibreOffice, for converting to and from office formats.
+#[cfg(feature = "convert")]
 pub(crate) const LIBREOFFICE: Tool = Tool {
     name: "LibreOffice",
     binaries: &["soffice", "libreoffice"],

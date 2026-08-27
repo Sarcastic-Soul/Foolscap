@@ -192,6 +192,41 @@ impl PageRenderer {
         Ok((bounds.x1 - bounds.x0, bounds.y1 - bounds.y0))
     }
 
+    /// The text already embedded in a page, in reading order.
+    ///
+    /// This is the text a PDF carries, not the result of recognising anything:
+    /// a page of scanned paper returns nothing at all. That distinction is
+    /// what lets OCR skip the pages that do not need it.
+    pub fn page_text(&self, page: usize) -> Result<String> {
+        if page >= self.page_count {
+            return Err(PdfError::PageOutOfRange {
+                requested: page + 1,
+                total: self.page_count,
+            });
+        }
+
+        let loaded = self
+            .inner
+            .load_page(page as i32)
+            .map_err(|source| render_error(&self.path, source))?;
+
+        let text_page = loaded
+            .to_text_page(mupdf::TextPageFlags::empty())
+            .map_err(|source| render_error(&self.path, source))?;
+
+        text_page
+            .to_text()
+            .map_err(|source| render_error(&self.path, source))
+    }
+
+    /// Whether a page already carries selectable text.
+    ///
+    /// Whitespace does not count: a page whose only text is a stray space is
+    /// still a scan as far as anyone reading it is concerned.
+    pub fn page_has_text(&self, page: usize) -> Result<bool> {
+        Ok(!self.page_text(page)?.trim().is_empty())
+    }
+
     /// How the cache is doing. Useful for deciding whether the GUI needs a
     /// bigger one.
     pub fn cache_stats(&self) -> CacheStats {

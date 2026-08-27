@@ -65,6 +65,12 @@ enum Command {
     /// Convert a PDF into an editable document. Approximate.
     #[cfg(feature = "convert")]
     ToOffice(commands::convert::ToOfficeArgs),
+    /// Add an invisible text layer so a scan becomes searchable.
+    #[cfg(feature = "ocr")]
+    Ocr(commands::ocr::OcrArgs),
+    /// Read out the text a document already carries. No recognition.
+    #[cfg(feature = "ocr")]
+    ExtractText(commands::ocr::ExtractTextArgs),
     /// Show which optional features this build supports.
     Capabilities,
 }
@@ -95,6 +101,10 @@ fn main() -> Result<()> {
         Command::FromOffice(args) => commands::convert::from_office(args, force),
         #[cfg(feature = "convert")]
         Command::ToOffice(args) => commands::convert::to_office(args, force),
+        #[cfg(feature = "ocr")]
+        Command::Ocr(args) => commands::ocr::run(args, force),
+        #[cfg(feature = "ocr")]
+        Command::ExtractText(args) => commands::ocr::extract_text(args, force),
         Command::Capabilities => {
             output::print_capabilities();
             Ok(())

@@ -17,6 +17,8 @@ mod assemble;
 pub mod convert;
 pub mod document;
 pub mod error;
+#[cfg(feature = "ocr")]
+pub mod ocr;
 pub mod ops;
 pub mod pages;
 mod placement;
@@ -29,6 +31,8 @@ mod text;
 
 pub use document::{Document, Metadata};
 pub use error::{PdfError, Result};
+#[cfg(feature = "ocr")]
+pub use ocr::{ocr, ocr_with_progress, OcrOptions, OcrReport};
 pub use ops::{
     compress, compress_with_progress, merge, merge_with_progress, optimize, rotate, split,
     split_plan, split_with_progress, CompressLevel, CompressReport, MetadataEdit, OptimizeLevel,

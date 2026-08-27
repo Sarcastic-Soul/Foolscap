@@ -17,7 +17,8 @@ render = ["dep:mupdf"]
 # Enabled in stage 4. Image and Office format conversion.
 convert = ["dep:printpdf"]
 # Enabled in stage 5. OCR via the Tesseract binary.
-ocr = []
+# Recognition rasterises pages first, so it needs the renderer too.
+ocr = ["render"]
 # Rendering plus conversion enables PDF-to-image output.
 render-convert = ["render", "convert"]
 
@@ -26,7 +27,9 @@ tempfile = "3"
 
 [dependencies]
 lopdf.workspace = true
-image = { workspace = true, features = ["jpeg"] }
+# JPEG for image recompression, PNG for the buffers handed to Tesseract and
+# written by page rasterisation.
+image = { workspace = true, features = ["jpeg", "png"] }
 flate2.workspace = true
 mupdf = { workspace = true, optional = true }
 printpdf = { workspace = true, optional = true }

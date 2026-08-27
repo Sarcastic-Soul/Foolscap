@@ -6,6 +6,8 @@ pub mod convert;
 pub mod info;
 pub mod merge;
 pub mod meta;
+#[cfg(feature = "ocr")]
+pub mod ocr;
 pub mod optimize;
 #[cfg(feature = "render")]
 pub mod render;

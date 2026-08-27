@@ -17,6 +17,7 @@ pub mod document;
 pub mod error;
 pub mod ops;
 pub mod pages;
+mod placement;
 pub mod progress;
 #[cfg(feature = "render")]
 pub mod render;
@@ -25,8 +26,9 @@ mod text;
 pub use document::{Document, Metadata};
 pub use error::{PdfError, Result};
 pub use ops::{
-    merge, merge_with_progress, optimize, rotate, split, split_plan, split_with_progress,
-    MetadataEdit, OptimizeLevel, OptimizeReport, SplitSpec,
+    compress, compress_with_progress, merge, merge_with_progress, optimize, rotate, split,
+    split_plan, split_with_progress, CompressLevel, CompressReport, MetadataEdit, OptimizeLevel,
+    OptimizeReport, SkipReason, SplitSpec,
 };
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};

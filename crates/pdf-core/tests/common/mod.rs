@@ -219,3 +219,165 @@ pub fn page_ids(path: &Path) -> Vec<(u32, u16)> {
 pub fn one_page(workspace: &Workspace, name: &str) -> PathBuf {
     workspace.document(name, 1, "Page")
 }
+
+/// Build a JPEG of the given pixel size with a gradient, so that it does not
+/// compress down to nothing and resampling has something to lose.
+pub fn jpeg_bytes(width: u32, height: u32, quality: u8) -> Vec<u8> {
+    use image::{ImageEncoder, Rgb, RgbImage};
+
+    let mut pixels = RgbImage::new(width, height);
+    for (x, y, pixel) in pixels.enumerate_pixels_mut() {
+        // Deterministic noise: a flat gradient would survive any downsampling,
+        // and a photo-like image is what these tests are standing in for.
+        let r = (x * 7 + y * 13) as u8;
+        let g = (x.wrapping_mul(y) % 251) as u8;
+        let b = (x as i32 - y as i32).unsigned_abs() as u8;
+        *pixel = Rgb([r, g, b]);
+    }
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality)
+        .write_image(
+            pixels.as_raw(),
+            width,
+            height,
+            image::ExtendedColorType::Rgb8,
+        )
+        .expect("could not encode the fixture JPEG");
+
+    buffer.into_inner()
+}
+
+/// How an image should appear on the page, in PDF points.
+#[derive(Debug, Clone, Copy)]
+pub struct ImagePlacement {
+    pub width: f32,
+    pub height: f32,
+    pub draw: bool,
+}
+
+impl ImagePlacement {
+    pub fn drawn(width: f32, height: f32) -> Self {
+        Self {
+            width,
+            height,
+            draw: true,
+        }
+    }
+
+    /// Embedded but never invoked by the content stream.
+    pub fn undrawn() -> Self {
+        Self {
+            width: 0.0,
+            height: 0.0,
+            draw: false,
+        }
+    }
+}
+
+/// A one-page A4 document containing a single JPEG image XObject.
+pub fn build_with_image(
+    pixel_width: u32,
+    pixel_height: u32,
+    placement: ImagePlacement,
+) -> Document {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let jpeg = jpeg_bytes(pixel_width, pixel_height, 92);
+    let image_id = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => pixel_width as i64,
+            "Height" => pixel_height as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+            "Filter" => "DCTDecode",
+        },
+        jpeg,
+    ));
+
+    let resources_id = doc.add_object(dictionary! {
+        "XObject" => dictionary! { "Im1" => image_id },
+    });
+
+    let operations = if placement.draw {
+        vec![
+            Operation::new("q", vec![]),
+            Operation::new(
+                "cm",
+                vec![
+                    placement.width.into(),
+                    0.into(),
+                    0.into(),
+                    placement.height.into(),
+                    50.into(),
+                    100.into(),
+                ],
+            ),
+            Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+            Operation::new("Q", vec![]),
+        ]
+    } else {
+        vec![]
+    };
+
+    let content_id = doc.add_object(Stream::new(
+        dictionary! {},
+        Content { operations }.encode().unwrap(),
+    ));
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id,
+        "Resources" => resources_id,
+        "MediaBox" => vec![0.into(), 0.into(), A4.0.into(), A4.1.into()],
+    });
+
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Count" => 1,
+            "Kids" => vec![page_id.into()],
+        }),
+    );
+
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    doc
+}
+
+/// The pixel dimensions and byte size of every image XObject in a document.
+pub fn image_summaries(path: &Path) -> Vec<(u32, u32, usize)> {
+    let doc = Document::load(path).expect("could not reload document");
+
+    doc.objects
+        .values()
+        .filter_map(|object| {
+            let Object::Stream(stream) = object else {
+                return None;
+            };
+            if stream
+                .dict
+                .get(b"Subtype")
+                .and_then(Object::as_name_str)
+                .ok()
+                != Some("Image")
+            {
+                return None;
+            }
+
+            let width = stream.dict.get(b"Width").and_then(Object::as_i64).ok()? as u32;
+            let height = stream.dict.get(b"Height").and_then(Object::as_i64).ok()? as u32;
+
+            Some((width, height, stream.content.len()))
+        })
+        .collect()
+}

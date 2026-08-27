@@ -9,7 +9,7 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{info, merge, meta, optimize, rotate, split};
+use commands::{compress, info, merge, meta, optimize, rotate, split};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -45,6 +45,8 @@ enum Command {
     Meta(meta::Args),
     /// Losslessly shrink a document.
     Optimize(optimize::Args),
+    /// Shrink a document by resampling its images. Lossy.
+    Compress(compress::Args),
     /// Rasterise pages to PNG.
     #[cfg(feature = "render")]
     Render(commands::render::RenderArgs),
@@ -68,6 +70,7 @@ fn main() -> Result<()> {
         Command::Info(args) => info::run(args),
         Command::Meta(args) => meta::run(args, force),
         Command::Optimize(args) => optimize::run(args, force),
+        Command::Compress(args) => compress::run(args, force),
         #[cfg(feature = "render")]
         Command::Render(args) => commands::render::render(args, force),
         #[cfg(feature = "render")]

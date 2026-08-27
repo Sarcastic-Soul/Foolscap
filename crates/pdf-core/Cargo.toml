@@ -24,6 +24,8 @@ tempfile = "3"
 
 [dependencies]
 lopdf.workspace = true
+image = { workspace = true, features = ["jpeg"] }
+flate2.workspace = true
 mupdf = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true

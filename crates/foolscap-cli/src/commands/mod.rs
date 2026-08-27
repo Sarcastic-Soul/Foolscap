@@ -1,5 +1,6 @@
 //! One module per subcommand. Each exposes an `Args` struct and a `run`.
 
+pub mod compress;
 pub mod info;
 pub mod merge;
 pub mod meta;

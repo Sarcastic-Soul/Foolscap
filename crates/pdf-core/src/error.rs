@@ -52,6 +52,25 @@ pub enum PdfError {
     #[error("this build of Foolscap was compiled without the {0:?} feature")]
     FeatureDisabled(&'static str),
 
+    #[error("{tool} is not installed or not on PATH; install it with: {install}")]
+    ToolMissing {
+        tool: &'static str,
+        install: &'static str,
+    },
+
+    #[error("{tool} failed{}: {message}", .status.map(|code| format!(" with exit code {code}")).unwrap_or_default())]
+    ToolFailed {
+        tool: &'static str,
+        status: Option<i32>,
+        message: String,
+    },
+
+    #[error("{tool} did not finish within {seconds} seconds")]
+    ToolTimeout { tool: &'static str, seconds: u64 },
+
+    #[error("{0} is not an image Foolscap can read")]
+    UnsupportedImage(PathBuf),
+
     #[error(transparent)]
     Lopdf(#[from] lopdf::Error),
 }

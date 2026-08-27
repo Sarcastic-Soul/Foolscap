@@ -53,6 +53,18 @@ enum Command {
     /// Write a single small preview image of one page.
     #[cfg(feature = "render")]
     Thumbnail(commands::render::ThumbnailArgs),
+    /// Bind images into a PDF, one page per image.
+    #[cfg(feature = "convert")]
+    FromImages(commands::convert::FromImagesArgs),
+    /// Rasterise every page to an image file.
+    #[cfg(all(feature = "convert", feature = "render"))]
+    ToImages(commands::to_images::Args),
+    /// Convert a document LibreOffice can open into a PDF.
+    #[cfg(feature = "convert")]
+    FromOffice(commands::convert::FromOfficeArgs),
+    /// Convert a PDF into an editable document. Approximate.
+    #[cfg(feature = "convert")]
+    ToOffice(commands::convert::ToOfficeArgs),
     /// Show which optional features this build supports.
     Capabilities,
 }
@@ -75,6 +87,14 @@ fn main() -> Result<()> {
         Command::Render(args) => commands::render::render(args, force),
         #[cfg(feature = "render")]
         Command::Thumbnail(args) => commands::render::thumbnail(args, force),
+        #[cfg(feature = "convert")]
+        Command::FromImages(args) => commands::convert::from_images(args, force),
+        #[cfg(all(feature = "convert", feature = "render"))]
+        Command::ToImages(args) => commands::to_images::run(args, force),
+        #[cfg(feature = "convert")]
+        Command::FromOffice(args) => commands::convert::from_office(args, force),
+        #[cfg(feature = "convert")]
+        Command::ToOffice(args) => commands::convert::to_office(args, force),
         Command::Capabilities => {
             output::print_capabilities();
             Ok(())
@@ -98,4 +118,18 @@ fn init_tracing(verbosity: u8) {
         .with_target(false)
         .with_writer(std::io::stderr)
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// Catches conflicts between global and subcommand flags — a duplicate
+    /// short option only panics when that subcommand is actually invoked, so
+    /// without this it escapes into a release.
+    #[test]
+    fn the_command_tree_is_well_formed() {
+        Cli::command().debug_assert();
+    }
 }

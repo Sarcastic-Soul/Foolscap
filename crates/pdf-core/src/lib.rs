@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 
 mod assemble;
+#[cfg(feature = "convert")]
+pub mod convert;
 pub mod document;
 pub mod error;
 pub mod ops;
@@ -21,6 +23,8 @@ mod placement;
 pub mod progress;
 #[cfg(feature = "render")]
 pub mod render;
+#[cfg(any(feature = "convert", feature = "ocr"))]
+mod subprocess;
 mod text;
 
 pub use document::{Document, Metadata};

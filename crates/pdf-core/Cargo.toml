@@ -15,9 +15,11 @@ default = []
 # and CI stay fast.
 render = ["dep:mupdf"]
 # Enabled in stage 4. Image and Office format conversion.
-convert = []
+convert = ["dep:printpdf"]
 # Enabled in stage 5. OCR via the Tesseract binary.
 ocr = []
+# Rendering plus conversion enables PDF-to-image output.
+render-convert = ["render", "convert"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -27,5 +29,6 @@ lopdf.workspace = true
 image = { workspace = true, features = ["jpeg"] }
 flate2.workspace = true
 mupdf = { workspace = true, optional = true }
+printpdf = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true

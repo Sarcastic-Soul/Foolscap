@@ -17,6 +17,7 @@ lopdf = "0.34"
 mupdf = { version = "0.8", default-features = false, features = ["base14-fonts"] }
 image = { version = "0.25", default-features = false }
 flate2 = "1"
+printpdf = { version = "0.12", default-features = false, features = ["jpeg", "png"] }
 thiserror = "2"
 tracing = "0.1"
 

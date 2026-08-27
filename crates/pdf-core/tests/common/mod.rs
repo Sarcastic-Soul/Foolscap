@@ -192,9 +192,15 @@ pub fn page_media_boxes(path: &Path) -> Vec<Vec<i64>> {
                 };
 
                 if let Ok(Object::Array(values)) = dict.get(b"MediaBox") {
+                    // Producers write these as either integers or reals;
+                    // printpdf uses reals, lopdf's own writer uses integers.
                     return values
                         .iter()
-                        .map(|value| value.as_i64().unwrap_or_default())
+                        .map(|value| match value {
+                            Object::Integer(number) => *number,
+                            Object::Real(number) => number.round() as i64,
+                            _ => 0,
+                        })
                         .collect();
                 }
 

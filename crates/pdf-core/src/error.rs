@@ -37,6 +37,15 @@ pub enum PdfError {
     #[error("refusing to overwrite existing file: {0}")]
     OutputExists(PathBuf),
 
+    #[error("no pages selected")]
+    EmptySelection,
+
+    #[error("{0} degrees is not a multiple of 90")]
+    InvalidRotation(i32),
+
+    #[error("internal error: {0}")]
+    Internal(String),
+
     #[error("this build of Foolscap was compiled without the {0:?} feature")]
     FeatureDisabled(&'static str),
 

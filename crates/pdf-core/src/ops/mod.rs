@@ -9,7 +9,8 @@ pub mod optimize;
 pub mod rotate;
 pub mod split;
 
-pub use merge::merge;
+pub use merge::{merge, merge_with_progress};
+pub use metadata::MetadataEdit;
 pub use optimize::{optimize, OptimizeLevel, OptimizeReport};
 pub use rotate::rotate;
-pub use split::{split, SplitSpec};
+pub use split::{plan as split_plan, split, split_with_progress, SplitSpec};

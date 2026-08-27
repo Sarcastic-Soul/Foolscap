@@ -19,7 +19,7 @@ the logic, consumed by a CLI now and a GTK4 desktop application later.
 belongs in which stage — read it before adding a feature, and update it when
 scope changes.
 
-Current state: stage 1 (document manipulation and CLI).
+Current state: stage 1 is complete. Stage 2 (rendering) is next.
 
 ## Commands
 
@@ -89,7 +89,11 @@ subtracting one inline — off-by-one errors here corrupt output silently.
   `--force` is passed.
 - `Cargo.lock` is committed; this is an application, not a library for others to
   depend on.
-- Integration fixtures live in `tests/fixtures/`. Keep each under 100 KB.
+- Integration fixtures are **generated**, not committed: see
+  `crates/pdf-core/tests/common/mod.rs`. Page geometry and whether attributes
+  are inherited or per-page are exactly what these tests need to vary, and a
+  few checked-in files cannot cover the combinations. `tests/fixtures/` is
+  reserved for real-world documents that expose something a generator cannot.
 - The project is AGPL-3.0-or-later, matching MuPDF. New files do not need a
   license header, but new dependencies must be license-compatible — anything
   linked in must be AGPL-compatible. Tools invoked as subprocesses
@@ -97,8 +101,18 @@ subtracting one inline — off-by-one errors here corrupt output silently.
 
 ## Traps already identified
 
-- `lopdf` fails opaquely on encrypted PDFs. Detect the `/Encrypt` dictionary and
-  return `PdfError::Encrypted` rather than letting a parse error surface.
+- `lopdf` *succeeds* at loading an encrypted PDF — the object structure parses
+  fine and every string and stream inside it is ciphertext. `Document::open`
+  therefore checks `is_encrypted()` after loading and returns
+  `PdfError::Encrypted`; without that check the failure surfaces much later as
+  nonsense content.
+- Writing a document mutates it: `save` appends a cross-reference stream object.
+  Measuring a document's serialised size must therefore be done on a clone, or
+  the number will not match the file that is written next.
+- Repointing a page at a new parent drops whatever it was inheriting —
+  `/Resources`, `/MediaBox`, `/CropBox`, `/Rotate`. `assemble` materialises
+  those onto each page first. Everything that rebuilds a page tree must go
+  through `crates/pdf-core/src/assemble.rs` rather than reinventing it.
 - Headless LibreOffice collides with itself on concurrent invocations unless
   each call gets an isolated profile via `-env:UserInstallation=`.
 - A render cache keyed by `(page, dpi)` is cheap to add in stage 2 and painful to

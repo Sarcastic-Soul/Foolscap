@@ -3,9 +3,13 @@
 //! This layer parses arguments, installs a `tracing` subscriber, calls into
 //! `pdf-core`, and formats the result. It holds no PDF logic of its own.
 
+mod commands;
+mod output;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pdf_core::Capabilities;
+
+use commands::{info, merge, meta, optimize, rotate, split};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -19,12 +23,28 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 
+    /// Overwrite output files that already exist.
+    #[arg(short, long, global = true)]
+    force: bool,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Concatenate documents into one.
+    Merge(merge::Args),
+    /// Extract pages, or burst a document into pieces.
+    Split(split::Args),
+    /// Rotate pages in place.
+    Rotate(rotate::Args),
+    /// Show page count, size, and metadata.
+    Info(info::Args),
+    /// Read or edit the document information dictionary.
+    Meta(meta::Args),
+    /// Losslessly shrink a document.
+    Optimize(optimize::Args),
     /// Show which optional features this build supports.
     Capabilities,
 }
@@ -33,11 +53,20 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
 
-    match cli.command {
-        Command::Capabilities => print_capabilities(),
-    }
+    let force = cli.force;
 
-    Ok(())
+    match cli.command {
+        Command::Merge(args) => merge::run(args, force),
+        Command::Split(args) => split::run(args, force),
+        Command::Rotate(args) => rotate::run(args, force),
+        Command::Info(args) => info::run(args),
+        Command::Meta(args) => meta::run(args, force),
+        Command::Optimize(args) => optimize::run(args, force),
+        Command::Capabilities => {
+            output::print_capabilities();
+            Ok(())
+        }
+    }
 }
 
 fn init_tracing(verbosity: u8) {
@@ -56,14 +85,4 @@ fn init_tracing(verbosity: u8) {
         .with_target(false)
         .with_writer(std::io::stderr)
         .init();
-}
-
-fn print_capabilities() {
-    let caps = Capabilities::current();
-    let mark = |enabled: bool| if enabled { "yes" } else { "no" };
-
-    println!("pdf-core   {}", pdf_core::VERSION);
-    println!("render     {}", mark(caps.render));
-    println!("convert    {}", mark(caps.convert));
-    println!("ocr        {}", mark(caps.ocr));
 }

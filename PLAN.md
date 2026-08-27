@@ -23,9 +23,9 @@ constrain distribution of Foolscap itself.
 
 ## Environment as of 2026-08-27
 
-Host is Ubuntu 24.04.4 LTS. Present: `git`, `cc`, `clang`, `pkg-config`.
-Absent: `cargo`, `rustc`, GTK4 development files, LibreOffice, Tesseract.
-Stage 0 installs all of these.
+Host is Ubuntu 24.04.4 LTS. Rust 1.98.0 is installed via rustup. Still absent,
+and needed by later stages: GTK4 development files, LibreOffice, Tesseract,
+`libclang-dev`, `cmake`.
 
 ## Two deviations from the original build order
 
@@ -122,7 +122,7 @@ Each stage is independently shippable and ends with something runnable.
 
 ---
 
-### Stage 0 — Toolchain and skeleton
+### Stage 0 — Toolchain and skeleton — **done**
 
 **Goal:** `cargo run -p foolscap-cli -- --version` prints a version.
 
@@ -147,7 +147,7 @@ Then: `git init`, workspace `Cargo.toml` with `members = ["crates/*"]`,
 
 ---
 
-### Stage 1 — Document manipulation and CLI
+### Stage 1 — Document manipulation and CLI — **done**
 
 **Goal:** the tool is already useful without any C dependencies.
 
@@ -175,14 +175,29 @@ Work items:
    `page_ids()` helper that returns pages in document order.
 3. The six operations, each in its own module under `ops/`.
 4. CLI subcommands, each one a `clap` struct that maps directly onto a core call.
-5. Encrypted-PDF detection: `lopdf` fails opaquely on encrypted files. Detect the
-   `/Encrypt` dictionary and return a specific `PdfError::Encrypted` so the CLI
-   can say so plainly.
+5. Encrypted-PDF detection. As built: `lopdf` *loads* an encrypted file happily
+   and leaves its strings and streams as ciphertext, so `Document::open` checks
+   `is_encrypted()` after loading and returns `PdfError::Encrypted`.
 
-**Done when:** each command round-trips a fixture PDF and the output opens
-correctly in an external viewer; `merge` of N files produces exactly the sum of
-their page counts; `split --every 1` followed by `merge` reproduces the original
-page count.
+Three things the implementation added that the plan had not anticipated:
+
+- **`assemble`, a shared page-assembly primitive.** Merge and split are the same
+  operation over different page selections. Doing them separately would have
+  meant solving attribute inheritance, object renumbering, and page-tree
+  rebuilding twice, slightly differently. `crates/pdf-core/src/assemble.rs` is
+  the one place that reassembles a page tree.
+- **Inherited attribute materialisation.** A page can inherit `/Resources`,
+  `/MediaBox`, `/CropBox`, and `/Rotate` from an ancestor. Repointing it at a new
+  parent silently drops those, which is how naive merges resize pages. Every
+  reassembly materialises them onto the page first.
+- **`split_plan`.** The CLI has to know the output names before writing anything
+  in order to ask before overwriting. Deriving them in `pdf-core` keeps one
+  naming scheme, and a test asserts the plan matches what `split` writes.
+
+**Verified:** 65 tests pass, `clippy -D warnings` is clean, and outputs were
+checked with poppler (`pdfinfo`, `pdftotext`) rather than only with the library
+that produced them — page counts, page order after reordering extraction, page
+geometry across a mixed A4/Letter merge, and a non-ASCII title round trip.
 
 ---
 
@@ -352,8 +367,10 @@ saves correctly.
 
 - `cargo clippy --all-targets -- -D warnings` must pass before every commit.
 - `cargo fmt` with default settings, no custom `rustfmt.toml`.
-- Integration tests live in `crates/pdf-core/tests/` and use committed fixture
-  PDFs; keep each fixture under 100 KB so the repository stays small.
+- Integration tests live in `crates/pdf-core/tests/` and generate their fixtures
+  rather than committing them, so that page geometry and attribute inheritance
+  can be varied per test. `tests/fixtures/` is reserved for real-world documents
+  that expose something a generator cannot.
 - Every command that writes a file refuses to overwrite an existing path unless
   `--force` is passed.
 - Version the CLI surface: the GUI in stage 6 depends on `pdf-core` directly, not
@@ -361,6 +378,6 @@ saves correctly.
 
 ## Immediate next step
 
-Stage 0: install rustup and the base build dependencies, then scaffold the
-workspace, both crates, the license, and the module stubs so
-`cargo run -p foolscap-cli -- --version` works.
+Stage 2: add the `render` feature and `mupdf-rs`, then `foolscap render` and
+`foolscap thumbnail`, with the `(page, dpi)` render cache in place from the
+start.

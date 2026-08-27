@@ -12,15 +12,20 @@
 
 #![forbid(unsafe_code)]
 
+mod assemble;
 pub mod document;
 pub mod error;
 pub mod ops;
 pub mod pages;
 pub mod progress;
+mod text;
 
 pub use document::{Document, Metadata};
 pub use error::{PdfError, Result};
-pub use ops::{merge, optimize, rotate, split, OptimizeLevel, OptimizeReport, SplitSpec};
+pub use ops::{
+    merge, merge_with_progress, optimize, rotate, split, split_plan, split_with_progress,
+    MetadataEdit, OptimizeLevel, OptimizeReport, SplitSpec,
+};
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};
 

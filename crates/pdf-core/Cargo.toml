@@ -19,6 +19,9 @@ convert = []
 # Enabled in stage 5. OCR via the Tesseract binary.
 ocr = []
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "foolscap-gui"
+description = "GTK4 desktop application for the Foolscap PDF toolkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "foolscap-gui"
+path = "src/main.rs"
+
+[dependencies]
+# The GUI is the one place every capability is expected to be present, so it
+# takes pdf-core with everything turned on.
+pdf-core = { workspace = true, features = ["render", "convert", "ocr"] }
+
+anyhow.workspace = true
+async-channel.workspace = true
+gtk4.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

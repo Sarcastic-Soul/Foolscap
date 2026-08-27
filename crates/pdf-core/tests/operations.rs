@@ -575,3 +575,91 @@ fn the_plan_matches_what_split_actually_writes() {
         assert_eq!(planned, written, "plan disagreed with reality for {spec:?}");
     }
 }
+
+// ---------------------------------------------------------------- arrange
+
+#[test]
+fn deleting_removes_only_the_named_pages() {
+    let workspace = Workspace::new();
+    let input = workspace.document("in.pdf", 5, "Page");
+    let out = workspace.join("out.pdf");
+
+    let doc = Document::open(&input).unwrap();
+    let mut trimmed = pdf_core::delete(doc, &range("2,4")).unwrap();
+    trimmed.save(&out).unwrap();
+
+    assert_eq!(common::page_labels(&out), ["Page 1", "Page 3", "Page 5"]);
+}
+
+#[test]
+fn deleting_every_page_is_refused() {
+    // A PDF with no pages is not something anyone can open.
+    let workspace = Workspace::new();
+    let input = workspace.document("in.pdf", 3, "Page");
+
+    let doc = Document::open(&input).unwrap();
+    let error = pdf_core::delete(doc, &range("all")).unwrap_err();
+
+    assert!(matches!(error, PdfError::EmptySelection), "got {error:?}");
+}
+
+#[test]
+fn arranging_reorders_and_can_duplicate() {
+    let workspace = Workspace::new();
+    let input = workspace.document("in.pdf", 3, "Page");
+    let out = workspace.join("out.pdf");
+
+    let doc = Document::open(&input).unwrap();
+    let mut arranged = pdf_core::arrange(doc, &[2, 0, 0]).unwrap();
+    arranged.save(&out).unwrap();
+
+    assert_eq!(common::page_labels(&out), ["Page 3", "Page 1", "Page 1"]);
+}
+
+#[test]
+fn moving_a_page_keeps_every_other_page() {
+    let workspace = Workspace::new();
+    let input = workspace.document("in.pdf", 5, "Page");
+    let out = workspace.join("out.pdf");
+
+    let doc = Document::open(&input).unwrap();
+    let mut moved = pdf_core::move_pages(doc, &range("1"), 3).unwrap();
+    moved.save(&out).unwrap();
+
+    assert_eq!(
+        common::page_labels(&out),
+        ["Page 2", "Page 3", "Page 1", "Page 4", "Page 5"]
+    );
+}
+
+#[test]
+fn moving_past_the_end_is_an_error() {
+    let workspace = Workspace::new();
+    let input = workspace.document("in.pdf", 3, "Page");
+
+    let doc = Document::open(&input).unwrap();
+    let error = pdf_core::move_pages(doc, &range("1"), 9).unwrap_err();
+
+    assert!(
+        matches!(error, PdfError::PageOutOfRange { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn arranging_preserves_inherited_page_geometry() {
+    let workspace = Workspace::new();
+    let input = workspace.write(
+        "letter.pdf",
+        common::build(3, "Page", LETTER, Attributes::Inherited),
+    );
+    let out = workspace.join("out.pdf");
+
+    let doc = Document::open(&input).unwrap();
+    let mut arranged = pdf_core::arrange(doc, &[2, 1, 0]).unwrap();
+    arranged.save(&out).unwrap();
+
+    for media_box in common::page_media_boxes(&out) {
+        assert_eq!(media_box, vec![0, 0, LETTER.0, LETTER.1]);
+    }
+}

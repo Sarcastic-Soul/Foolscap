@@ -18,7 +18,8 @@ fn a_page_renders_at_the_size_its_dpi_implies() {
 
     assert_eq!(page.width, A4.0 as u32);
     assert_eq!(page.height, A4.1 as u32);
-    assert_eq!(page.channels, 4);
+    // Rendered without an alpha channel, so a page reads as paper.
+    assert_eq!(page.channels, 3);
     assert_eq!(page.pixels.len(), page.stride() * page.height as usize);
 }
 
@@ -55,11 +56,11 @@ fn a_rendered_page_is_not_blank() {
     let renderer = PageRenderer::open(&path).unwrap();
 
     let page = renderer.render(0, Scale::Dpi(72.0)).unwrap();
-    let first = page.pixels.first().copied().unwrap_or(0);
 
+    // The background is white; the text is not.
     assert!(
-        page.pixels.iter().any(|&sample| sample != first),
-        "every pixel was identical, so nothing was drawn"
+        page.pixels.iter().any(|&sample| sample != 255),
+        "every pixel was white, so nothing was drawn"
     );
 }
 
@@ -145,4 +146,23 @@ fn inherited_page_geometry_is_honoured_when_rendering() {
 
     assert_eq!(page.width, LETTER.0 as u32);
     assert_eq!(page.height, LETTER.1 as u32);
+}
+
+#[test]
+fn unmarked_areas_come_back_white() {
+    // A page is paper. Rendered with an alpha channel, blank areas would be
+    // transparent and show whatever is behind them.
+    let workspace = Workspace::new();
+    let path = workspace.document("in.pdf", 1, "Page");
+    let renderer = PageRenderer::open(&path).unwrap();
+
+    let page = renderer.render(0, Scale::Dpi(72.0)).unwrap();
+
+    // The bottom right corner of the fixture is empty.
+    let last = page.pixels.len() - page.channels as usize;
+    assert!(
+        page.pixels[last..].iter().all(|&sample| sample == 255),
+        "the corner should be white, got {:?}",
+        &page.pixels[last..]
+    );
 }

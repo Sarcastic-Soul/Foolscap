@@ -39,16 +39,15 @@ fn scanned_page(workspace: &Workspace, name: &str, words: &str) -> std::path::Pa
         .render(0, pdf_core::render::Scale::Dpi(200.0))
         .unwrap();
 
-    // Flatten to RGB and re-embed as a JPEG-free PNG-backed image page.
+    // Pages render as RGB on white, so the samples transfer straight across.
+    let channels = rendered.channels as usize;
     let mut pixels = RgbImage::new(rendered.width, rendered.height);
     for (index, pixel) in pixels.pixels_mut().enumerate() {
-        let offset = index * rendered.channels as usize;
-        let alpha = rendered.pixels[offset + 3] as u32;
-        let over_white = |channel: u8| ((channel as u32 * alpha + 255 * (255 - alpha)) / 255) as u8;
+        let offset = index * channels;
         *pixel = Rgb([
-            over_white(rendered.pixels[offset]),
-            over_white(rendered.pixels[offset + 1]),
-            over_white(rendered.pixels[offset + 2]),
+            rendered.pixels[offset],
+            rendered.pixels[offset + 1],
+            rendered.pixels[offset + 2],
         ]);
     }
 

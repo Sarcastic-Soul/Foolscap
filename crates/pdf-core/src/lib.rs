@@ -34,9 +34,9 @@ pub use error::{PdfError, Result};
 #[cfg(feature = "ocr")]
 pub use ocr::{ocr, ocr_with_progress, OcrOptions, OcrReport};
 pub use ops::{
-    compress, compress_with_progress, merge, merge_with_progress, optimize, rotate, split,
-    split_plan, split_with_progress, CompressLevel, CompressReport, MetadataEdit, OptimizeLevel,
-    OptimizeReport, SkipReason, SplitSpec,
+    arrange, compress, compress_with_progress, delete, merge, merge_with_progress, move_pages,
+    optimize, rotate, split, split_plan, split_with_progress, CompressLevel, CompressReport,
+    MetadataEdit, OptimizeLevel, OptimizeReport, SkipReason, SplitSpec,
 };
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};

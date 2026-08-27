@@ -9,7 +9,7 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{compress, info, merge, meta, optimize, rotate, split};
+use commands::{arrange, compress, info, merge, meta, optimize, rotate, split};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,6 +39,10 @@ enum Command {
     Split(split::Args),
     /// Rotate pages in place.
     Rotate(rotate::Args),
+    /// Remove pages.
+    Delete(arrange::DeleteArgs),
+    /// Put pages in a different order.
+    Reorder(arrange::ReorderArgs),
     /// Show page count, size, and metadata.
     Info(info::Args),
     /// Read or edit the document information dictionary.
@@ -85,6 +89,8 @@ fn main() -> Result<()> {
         Command::Merge(args) => merge::run(args, force),
         Command::Split(args) => split::run(args, force),
         Command::Rotate(args) => rotate::run(args, force),
+        Command::Delete(args) => arrange::delete(args, force),
+        Command::Reorder(args) => arrange::reorder(args, force),
         Command::Info(args) => info::run(args),
         Command::Meta(args) => meta::run(args, force),
         Command::Optimize(args) => optimize::run(args, force),

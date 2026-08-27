@@ -17,6 +17,9 @@ lopdf = "0.34"
 mupdf = { version = "0.8", default-features = false, features = ["base14-fonts"] }
 image = { version = "0.25", default-features = false }
 flate2 = "1"
+# v4_10 for FileDialog, which replaced the deprecated FileChooserNative.
+gtk4 = { version = "0.11", features = ["v4_10"] }
+async-channel = "2"
 printpdf = { version = "0.12", default-features = false, features = ["jpeg", "png"] }
 thiserror = "2"
 tracing = "0.1"

@@ -380,6 +380,14 @@ mod tests {
             }),
         );
 
+        // Without a catalog reachable from the trailer there are no pages to
+        // find, however well formed the page tree is.
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog);
+
         assert_eq!(layer_page_width(&doc), Some(612.0));
     }
 

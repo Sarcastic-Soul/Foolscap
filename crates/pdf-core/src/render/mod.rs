@@ -32,8 +32,8 @@ pub const DEFAULT_DPI: f32 = 150.0;
 pub struct RenderedPage {
     pub width: u32,
     pub height: u32,
-    /// Samples per pixel: 4 for RGBA, which is what this module always
-    /// produces. Carried explicitly so callers do not have to assume.
+    /// Samples per pixel: 3 for the RGB this module produces. Carried
+    /// explicitly so callers do not have to assume.
     pub channels: u8,
     pub pixels: Vec<u8>,
 }
@@ -257,11 +257,13 @@ impl PageRenderer {
         }
 
         let matrix = Matrix::new_scale(factor, factor);
-        // Alpha on, so the buffer is RGBA and needs no widening for a GPU
-        // texture. show_extras draws annotations and widgets, which is what a
-        // viewer should show.
+        // Alpha off, so unmarked areas come back white instead of transparent.
+        // A page is paper: rendered with an alpha channel it would show through
+        // to whatever is behind it, which looks like floating ink rather than a
+        // document. show_extras draws annotations and form widgets, which is
+        // what a viewer should show.
         let pixmap = loaded
-            .to_pixmap(&matrix, &Colorspace::device_rgb(), true, true)
+            .to_pixmap(&matrix, &Colorspace::device_rgb(), false, true)
             .map_err(|source| render_error(&self.path, source))?;
 
         let rendered = RenderedPage {

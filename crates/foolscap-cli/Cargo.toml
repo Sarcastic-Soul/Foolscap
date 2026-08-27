@@ -1,0 +1,28 @@
+[package]
+name = "foolscap-cli"
+description = "Command-line interface for the Foolscap PDF toolkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "foolscap"
+path = "src/main.rs"
+
+[features]
+default = []
+render = ["pdf-core/render"]
+convert = ["pdf-core/convert"]
+ocr = ["pdf-core/ocr"]
+full = ["render", "convert", "ocr"]
+
+[dependencies]
+pdf-core.workspace = true
+
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

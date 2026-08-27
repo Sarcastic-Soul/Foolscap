@@ -214,3 +214,8 @@ pub fn page_ids(path: &Path) -> Vec<(u32, u16)> {
     let doc = Document::load(path).expect("could not reload document");
     doc.get_pages().into_values().collect()
 }
+
+/// Write a fixture and hand back its path, for tests that only need one page.
+pub fn one_page(workspace: &Workspace, name: &str) -> PathBuf {
+    workspace.document(name, 1, "Page")
+}

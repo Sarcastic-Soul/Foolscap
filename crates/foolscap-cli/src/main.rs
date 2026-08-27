@@ -45,6 +45,12 @@ enum Command {
     Meta(meta::Args),
     /// Losslessly shrink a document.
     Optimize(optimize::Args),
+    /// Rasterise pages to PNG.
+    #[cfg(feature = "render")]
+    Render(commands::render::RenderArgs),
+    /// Write a single small preview image of one page.
+    #[cfg(feature = "render")]
+    Thumbnail(commands::render::ThumbnailArgs),
     /// Show which optional features this build supports.
     Capabilities,
 }
@@ -62,6 +68,10 @@ fn main() -> Result<()> {
         Command::Info(args) => info::run(args),
         Command::Meta(args) => meta::run(args, force),
         Command::Optimize(args) => optimize::run(args, force),
+        #[cfg(feature = "render")]
+        Command::Render(args) => commands::render::render(args, force),
+        #[cfg(feature = "render")]
+        Command::Thumbnail(args) => commands::render::thumbnail(args, force),
         Command::Capabilities => {
             output::print_capabilities();
             Ok(())

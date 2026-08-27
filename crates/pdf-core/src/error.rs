@@ -46,6 +46,9 @@ pub enum PdfError {
     #[error("internal error: {0}")]
     Internal(String),
 
+    #[error("could not render {path}: {reason}")]
+    Render { path: PathBuf, reason: String },
+
     #[error("this build of Foolscap was compiled without the {0:?} feature")]
     FeatureDisabled(&'static str),
 

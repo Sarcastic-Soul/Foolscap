@@ -13,7 +13,7 @@ default = []
 # Enabled in stage 2. Pulls in mupdf-rs, which vendors and builds the MuPDF C
 # sources; expect a long first build. Kept off by default so day-to-day builds
 # and CI stay fast.
-render = []
+render = ["dep:mupdf"]
 # Enabled in stage 4. Image and Office format conversion.
 convert = []
 # Enabled in stage 5. OCR via the Tesseract binary.
@@ -24,5 +24,6 @@ tempfile = "3"
 
 [dependencies]
 lopdf.workspace = true
+mupdf = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true

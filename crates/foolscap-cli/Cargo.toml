@@ -14,13 +14,14 @@ path = "src/main.rs"
 
 [features]
 default = []
-render = ["pdf-core/render"]
+render = ["pdf-core/render", "dep:image"]
 convert = ["pdf-core/convert"]
 ocr = ["pdf-core/ocr"]
 full = ["render", "convert", "ocr"]
 
 [dependencies]
 pdf-core.workspace = true
+image = { workspace = true, optional = true, features = ["png"] }
 
 anyhow.workspace = true
 clap.workspace = true

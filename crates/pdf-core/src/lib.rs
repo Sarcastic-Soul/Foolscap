@@ -18,6 +18,8 @@ pub mod error;
 pub mod ops;
 pub mod pages;
 pub mod progress;
+#[cfg(feature = "render")]
+pub mod render;
 mod text;
 
 pub use document::{Document, Metadata};
@@ -28,6 +30,8 @@ pub use ops::{
 };
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};
+#[cfg(feature = "render")]
+pub use render::{PageRenderer, RenderedPage, Scale};
 
 /// The version of `pdf-core`, taken from the crate manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

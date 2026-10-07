@@ -19,7 +19,7 @@ the logic, consumed by a CLI now and a GTK4 desktop application later.
 belongs in which stage — read it before adding a feature, and update it when
 scope changes.
 
-Current state: all seven planned stages are built. 232 tests pass and
+Current state: all seven planned stages are built. 274 tests pass and
 `clippy -D warnings` is clean across every feature combination.
 
 ## Commands
@@ -39,6 +39,7 @@ cargo fmt
 cargo clippy --all-targets --workspace $ALL -- -D warnings   # clean before every commit
 
 ./packaging/build-deb.sh                      # produces target/debian/*.deb
+./packaging/build-tarball.sh                  # produces target/tarball/*.tar.gz
 ```
 
 Cargo lives at `~/.cargo/bin`; non-login shells may need `. "$HOME/.cargo/env"`

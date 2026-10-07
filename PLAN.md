@@ -383,7 +383,7 @@ saves correctly.
 
 ## Every stage is built
 
-All seven stages are implemented, with 232 tests passing and
+All seven stages are implemented, with 274 tests passing and
 `clippy -D warnings` clean across every feature combination.
 
 ### What the plan got wrong
@@ -473,5 +473,6 @@ order of value:
    at 8 bits. The code is in `crates/pdf-core/src/ops/compress/predictor.rs`.
 3. **Tesseract inside the Flatpak**, so OCR works there as it does in the `.deb`.
 4. **A page-thumbnail cache on disk**, so reopening a large document is instant.
-5. **Undo in the GUI.** Edits are already a plain value; keeping a stack of them
-   is most of the work.
+5. ~~**Undo in the GUI.**~~ Done, along with keyboard shortcuts, plain Save over
+   the open file, a prompt for unsaved changes, zoom, an About dialog and a
+   password prompt for protected documents.

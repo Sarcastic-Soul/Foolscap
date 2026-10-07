@@ -6,9 +6,9 @@
 # carry. Fedora, Arch and Debian then all get the same behaviour.
 #
 # Build with:
-#   flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47 \
-#       org.freedesktop.Sdk.Extension.rust-stable//24.08 \
-#       org.freedesktop.Sdk.Extension.llvm18//24.08
+#   flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50 \
+#       org.freedesktop.Sdk.Extension.rust-stable//25.08 \
+#       org.freedesktop.Sdk.Extension.llvm20//25.08
 #   flatpak-builder --user --install --force-clean build-dir \
 #       packaging/flatpak/com.github.sarcastic_soul.Foolscap.yml
 #
@@ -17,12 +17,12 @@
 
 app-id: com.github.sarcastic_soul.Foolscap
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
   # bindgen needs libclang to generate the MuPDF bindings.
-  - org.freedesktop.Sdk.Extension.llvm18
+  - org.freedesktop.Sdk.Extension.llvm20
 command: foolscap-gui
 
 # The source tree names the icon `foolscap` so the .deb can install it as is.
@@ -41,14 +41,14 @@ finish-args:
   - --filesystem=xdg-download
 
 build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm18/bin
-  prepend-ld-library-path: /usr/lib/sdk/llvm18/lib
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm20/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
   env:
     # The build has no network. cargo-sources.json unpacks every crate into
     # cargo/vendor and writes a cargo/config that points crates.io there; that
     # config is only found if CARGO_HOME is this exact directory.
     CARGO_HOME: /run/build/foolscap/cargo
-    LIBCLANG_PATH: /usr/lib/sdk/llvm18/lib
+    LIBCLANG_PATH: /usr/lib/sdk/llvm20/lib
 
 modules:
   # LibreOffice and Tesseract are invoked as subprocesses. Inside a Flatpak

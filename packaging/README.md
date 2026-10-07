@@ -40,9 +40,9 @@ from Ubuntu 24.04: GTK 4.14 and glibc 2.39.
 ## Flatpak
 
 ```sh
-flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47 \
-    org.freedesktop.Sdk.Extension.rust-stable//24.08 \
-    org.freedesktop.Sdk.Extension.llvm18//24.08
+flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50 \
+    org.freedesktop.Sdk.Extension.rust-stable//25.08 \
+    org.freedesktop.Sdk.Extension.llvm20//25.08
 flatpak-builder --user --install --force-clean build-dir \
     packaging/flatpak/com.github.sarcastic_soul.Foolscap.yml
 ```

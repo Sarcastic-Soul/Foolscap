@@ -11,7 +11,7 @@ mod worker;
 use gtk4::prelude::*;
 use gtk4::{gio, glib, Application};
 
-const APP_ID: &str = "com.github.sarcastic_soul.Foolscap";
+pub const APP_ID: &str = "com.github.sarcastic_soul.Foolscap";
 
 fn main() -> glib::ExitCode {
     init_tracing();
@@ -22,6 +22,8 @@ fn main() -> glib::ExitCode {
         // Foolscap from a file manager works.
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
+
+    app.connect_startup(window::install_app_actions);
 
     app.connect_activate(|app| {
         tracing::info!("activated with no document");

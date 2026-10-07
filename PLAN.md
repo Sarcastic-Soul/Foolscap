@@ -421,8 +421,13 @@ order of value:
 1. **Password handling.** Encrypted documents are refused by name; accepting a
    password and calling `lopdf`'s `decrypt` would open a common category of
    file that currently cannot be touched at all.
-2. **Predictor support in `compress`.** Flate images with a PNG predictor are
-   skipped, which leaves some documents shrinking less than they could.
+2. **Predictor support in `compress`** — **done**. Flate images with a PNG
+   predictor (`/Predictor` 10 to 15, all five row filters) or the TIFF
+   predictor (`/Predictor 2`) are now un-filtered and go through the same
+   resample-and-JPEG path as any other image. The row filters work on bytes,
+   so they would handle any depth, but decoding still needs 8-bit components,
+   so other depths are skipped as before; the TIFF predictor is only reversed
+   at 8 bits. The code is in `crates/pdf-core/src/ops/compress/predictor.rs`.
 3. **Tesseract inside the Flatpak**, so OCR works there as it does in the `.deb`.
 4. **A page-thumbnail cache on disk**, so reopening a large document is instant.
 5. **Undo in the GUI.** Edits are already a plain value; keeping a stack of them

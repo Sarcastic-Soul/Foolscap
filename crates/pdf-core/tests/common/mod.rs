@@ -226,20 +226,26 @@ pub fn one_page(workspace: &Workspace, name: &str) -> PathBuf {
     workspace.document(name, 1, "Page")
 }
 
-/// Build a JPEG of the given pixel size with a gradient, so that it does not
-/// compress down to nothing and resampling has something to lose.
-pub fn jpeg_bytes(width: u32, height: u32, quality: u8) -> Vec<u8> {
-    use image::{ImageEncoder, Rgb, RgbImage};
-
-    let mut pixels = RgbImage::new(width, height);
+/// Photo-like RGB pixels: a gradient with deterministic noise, so that they do
+/// not compress down to nothing and resampling has something to lose.
+pub fn photo_pixels(width: u32, height: u32) -> image::RgbImage {
+    let mut pixels = image::RgbImage::new(width, height);
     for (x, y, pixel) in pixels.enumerate_pixels_mut() {
-        // Deterministic noise: a flat gradient would survive any downsampling,
-        // and a photo-like image is what these tests are standing in for.
+        // A flat gradient would survive any downsampling, and a photo-like
+        // image is what these tests are standing in for.
         let r = (x * 7 + y * 13) as u8;
         let g = (x.wrapping_mul(y) % 251) as u8;
         let b = (x as i32 - y as i32).unsigned_abs() as u8;
-        *pixel = Rgb([r, g, b]);
+        *pixel = image::Rgb([r, g, b]);
     }
+    pixels
+}
+
+/// Build a JPEG of the given pixel size from [`photo_pixels`].
+pub fn jpeg_bytes(width: u32, height: u32, quality: u8) -> Vec<u8> {
+    use image::ImageEncoder;
+
+    let pixels = photo_pixels(width, height);
 
     let mut buffer = std::io::Cursor::new(Vec::new());
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality)
@@ -287,11 +293,8 @@ pub fn build_with_image(
     pixel_height: u32,
     placement: ImagePlacement,
 ) -> Document {
-    let mut doc = Document::with_version("1.5");
-    let pages_id = doc.new_object_id();
-
     let jpeg = jpeg_bytes(pixel_width, pixel_height, 92);
-    let image_id = doc.add_object(Stream::new(
+    let image = Stream::new(
         dictionary! {
             "Type" => "XObject",
             "Subtype" => "Image",
@@ -302,7 +305,170 @@ pub fn build_with_image(
             "Filter" => "DCTDecode",
         },
         jpeg,
-    ));
+    );
+
+    build_with_image_stream(image, placement)
+}
+
+/// How the samples of a Flate image are delta-encoded before compression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Predictor {
+    /// `/Predictor 2`: each sample minus the same component to its left.
+    Tiff,
+    /// `/Predictor 15`: PNG filters, using all five so that every filter type
+    /// appears in the stream.
+    Png,
+}
+
+/// Apply the PNG filter `filter` to one row, given the row above.
+fn png_filter_row(filter: u8, row: &[u8], previous: &[u8], bpp: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(row.len() + 1);
+    out.push(filter);
+
+    for i in 0..row.len() {
+        let left = if i >= bpp { row[i - bpp] } else { 0 };
+        let up = previous[i];
+        let up_left = if i >= bpp { previous[i - bpp] } else { 0 };
+
+        let prediction = match filter {
+            0 => 0,
+            1 => left,
+            2 => up,
+            3 => ((u16::from(left) + u16::from(up)) / 2) as u8,
+            4 => {
+                let (a, b, c) = (i16::from(left), i16::from(up), i16::from(up_left));
+                let p = a + b - c;
+                let (pa, pb, pc) = ((p - a).abs(), (p - b).abs(), (p - c).abs());
+                if pa <= pb && pa <= pc {
+                    left
+                } else if pb <= pc {
+                    up
+                } else {
+                    up_left
+                }
+            }
+            _ => unreachable!("PNG defines filter types 0 to 4"),
+        };
+        out.push(row[i].wrapping_sub(prediction));
+    }
+
+    out
+}
+
+/// Delta-encode RGB samples with `predictor`, as a PDF writer would before
+/// deflating them.
+pub fn predict(pixels: &image::RgbImage, predictor: Predictor) -> Vec<u8> {
+    const BPP: usize = 3;
+    let row_bytes = pixels.width() as usize * BPP;
+    let raw = pixels.as_raw();
+
+    match predictor {
+        Predictor::Tiff => {
+            let mut out = raw.clone();
+            for (row, original) in out.chunks_mut(row_bytes).zip(raw.chunks(row_bytes)) {
+                for i in BPP..row.len() {
+                    row[i] = original[i].wrapping_sub(original[i - BPP]);
+                }
+            }
+            out
+        }
+        Predictor::Png => {
+            let mut out = Vec::with_capacity(raw.len() + pixels.height() as usize);
+            let mut previous = vec![0u8; row_bytes];
+            for (index, row) in raw.chunks(row_bytes).enumerate() {
+                // None, then Sub, then Up, Average and Paeth in turn. None and
+                // Sub ignore the row above, so using each only once lets a
+                // mistake in any later row carry down the rest of the image
+                // rather than being reset a few rows on.
+                let filter = match index {
+                    0 => 0,
+                    1 => 1,
+                    _ => 2 + (index - 2) % 3,
+                };
+                out.extend(png_filter_row(filter as u8, row, &previous, BPP));
+                previous.copy_from_slice(row);
+            }
+            out
+        }
+    }
+}
+
+/// Photo-like RGB pixels with smooth gradients under mild per-pixel grain.
+///
+/// Unlike [`photo_pixels`], the content that matters survives resampling and
+/// JPEG nearly intact, so a test can compare a recompressed image against the
+/// original closely. The grain keeps Flate from shrinking it to nothing, and
+/// because the grain is not predictable, a predictor reversed wrongly leaves
+/// errors that build up down the image instead of cancelling out.
+pub fn soft_photo_pixels(width: u32, height: u32) -> image::RgbImage {
+    let mut pixels = image::RgbImage::new(width, height);
+    for (x, y, pixel) in pixels.enumerate_pixels_mut() {
+        let (fx, fy) = (x as f32 / width as f32, y as f32 / height as f32);
+
+        // A cheap integer hash, giving grain in -8..=7.
+        let hash = (x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(2_246_822_519))
+            .wrapping_mul(3_266_489_917);
+        let grain = (hash >> 28) as f32 - 8.0;
+
+        let channel = |value: f32| (value + grain).clamp(0.0, 255.0) as u8;
+        *pixel = image::Rgb([
+            channel(40.0 + 170.0 * fx),
+            channel(40.0 + 170.0 * fy),
+            channel(128.0 + 80.0 * (6.0 * fx + 4.0 * fy).sin()),
+        ]);
+    }
+    pixels
+}
+
+/// A one-page A4 document containing a single Flate-compressed RGB image of
+/// [`soft_photo_pixels`], delta-encoded with `predictor`.
+pub fn build_with_predicted_image(
+    pixel_width: u32,
+    pixel_height: u32,
+    placement: ImagePlacement,
+    predictor: Predictor,
+) -> Document {
+    use std::io::Write;
+
+    let predicted = predict(&soft_photo_pixels(pixel_width, pixel_height), predictor);
+
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&predicted).unwrap();
+    let deflated = encoder.finish().unwrap();
+
+    let mut image = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => pixel_width as i64,
+            "Height" => pixel_height as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+            "Filter" => "FlateDecode",
+            "DecodeParms" => dictionary! {
+                "Predictor" => match predictor {
+                    Predictor::Tiff => 2,
+                    Predictor::Png => 15,
+                },
+                "Colors" => 3,
+                "BitsPerComponent" => 8,
+                "Columns" => pixel_width as i64,
+            },
+        },
+        deflated,
+    );
+    // Already deflated; compressing again on save would corrupt it.
+    image.allows_compression = false;
+
+    build_with_image_stream(image, placement)
+}
+
+/// A one-page A4 document drawing `image` as `/Im1` at (50, 100).
+fn build_with_image_stream(image: Stream, placement: ImagePlacement) -> Document {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let image_id = doc.add_object(image);
 
     let resources_id = doc.add_object(dictionary! {
         "XObject" => dictionary! { "Im1" => image_id },

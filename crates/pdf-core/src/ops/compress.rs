@@ -6,6 +6,8 @@
 //!
 //! [`optimize`]: crate::ops::optimize
 
+mod predictor;
+
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -18,6 +20,8 @@ use crate::error::Result;
 use crate::ops::optimize::{optimize, OptimizeLevel, OptimizeReport};
 use crate::placement::{measure_images, Placement};
 use crate::progress::{Progress, ProgressFn};
+
+use predictor::{unpredict, PredictorParams};
 
 /// How hard to squeeze, in the vocabulary Ghostscript established and users
 /// already know.
@@ -62,7 +66,8 @@ pub enum SkipReason {
     /// the shape it cuts out.
     Mask,
     /// A filter this pass cannot decode: JPX, CCITT, JBIG2, or a Flate image
-    /// with a predictor.
+    /// whose predictor cannot be reversed (the TIFF predictor at a depth other
+    /// than 8 bits, or malformed predictor parameters).
     UnsupportedFilter,
     /// A colour space this pass cannot interpret, such as Indexed or Separation.
     UnsupportedColorSpace,
@@ -211,7 +216,7 @@ fn recompress_one(
         return Ok(Outcome::Skipped(SkipReason::Mask));
     }
 
-    let decoded = decode_image(&stream)?;
+    let decoded = decode_image(doc, &stream)?;
     let (width, height) = (decoded.width(), decoded.height());
 
     if width.max(height) <= TINY_EDGE {
@@ -271,7 +276,10 @@ fn is_masked(dict: &Dictionary) -> bool {
         || dict.get(b"Mask").is_ok()
 }
 
-fn decode_image(stream: &Stream) -> std::result::Result<DynamicImage, SkipReason> {
+fn decode_image(
+    doc: &lopdf::Document,
+    stream: &Stream,
+) -> std::result::Result<DynamicImage, SkipReason> {
     let filters = stream.filters().unwrap_or_default();
 
     match filters.last().map(String::as_str) {
@@ -279,7 +287,7 @@ fn decode_image(stream: &Stream) -> std::result::Result<DynamicImage, SkipReason
             image::load_from_memory_with_format(&stream.content, ImageFormat::Jpeg)
                 .map_err(|_| SkipReason::UnsupportedFilter)
         }
-        Some("FlateDecode") | None => decode_raw(stream),
+        Some("FlateDecode") | None => decode_raw(doc, stream),
         // JPXDecode, CCITTFaxDecode, JBIG2Decode and friends need decoders this
         // pass does not carry.
         Some(_) => Err(SkipReason::UnsupportedFilter),
@@ -287,20 +295,10 @@ fn decode_image(stream: &Stream) -> std::result::Result<DynamicImage, SkipReason
 }
 
 /// Decode an uncompressed or Flate-compressed bitmap.
-fn decode_raw(stream: &Stream) -> std::result::Result<DynamicImage, SkipReason> {
-    // A predictor means the samples are delta-encoded row by row, which needs
-    // an unfiltering pass this does not implement.
-    if let Ok(parms) = stream.dict.get(b"DecodeParms").and_then(Object::as_dict) {
-        if parms
-            .get(b"Predictor")
-            .and_then(Object::as_i64)
-            .unwrap_or(1)
-            > 1
-        {
-            return Err(SkipReason::UnsupportedFilter);
-        }
-    }
-
+fn decode_raw(
+    doc: &lopdf::Document,
+    stream: &Stream,
+) -> std::result::Result<DynamicImage, SkipReason> {
     let bits = stream
         .dict
         .get(b"BitsPerComponent")
@@ -328,9 +326,14 @@ fn decode_raw(stream: &Stream) -> std::result::Result<DynamicImage, SkipReason> 
         .unwrap_or("DeviceRGB");
 
     let samples = if stream.filters().unwrap_or_default().is_empty() {
+        // Decode parameters belong to a filter; with no filter there are none.
         stream.content.clone()
     } else {
-        inflate(&stream.content)?
+        let params = predictor_params(doc, &stream.dict)?;
+        unpredict(inflate(&stream.content)?, &params).map_err(|error| {
+            tracing::debug!(?error, ?params, "could not reverse the image predictor");
+            SkipReason::UnsupportedFilter
+        })?
     };
 
     match colour {
@@ -343,6 +346,38 @@ fn decode_raw(stream: &Stream) -> std::result::Result<DynamicImage, SkipReason> 
         // Indexed, Separation, DeviceN, ICCBased and CMYK all need the colour
         // space resolved before the samples mean anything.
         _ => Err(SkipReason::UnsupportedColorSpace),
+    }
+}
+
+/// The predictor parameters for the Flate filter, which is the last one in the
+/// chain since that is the only shape [`decode_image`] accepts.
+///
+/// `/DecodeParms` is a dictionary for a single filter, or an array matching a
+/// `/Filter` array; either may be an indirect reference. A missing entry, or
+/// `null` in the array, means no parameters and therefore no predictor.
+fn predictor_params(
+    doc: &lopdf::Document,
+    dict: &Dictionary,
+) -> std::result::Result<PredictorParams, SkipReason> {
+    let none = PredictorParams::from_dict(&Dictionary::new());
+
+    let Ok(parms) = dict.get(b"DecodeParms") else {
+        return Ok(none);
+    };
+    let unreadable = |_| SkipReason::UnsupportedFilter;
+
+    let parms = match doc.dereference(parms).map_err(unreadable)?.1 {
+        Object::Array(items) => match items.last() {
+            Some(last) => doc.dereference(last).map_err(unreadable)?.1,
+            None => return Ok(none),
+        },
+        other => other,
+    };
+
+    match parms {
+        Object::Dictionary(parms) => Ok(PredictorParams::from_dict(parms)),
+        Object::Null => Ok(none),
+        _ => Err(SkipReason::UnsupportedFilter),
     }
 }
 

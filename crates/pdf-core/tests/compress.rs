@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{ImagePlacement, Workspace};
+use common::{ImagePlacement, Predictor, Workspace};
 use pdf_core::{CompressLevel, Document, SkipReason};
 
 /// The workhorse case: a large photo drawn into a small box on the page.
@@ -296,5 +296,208 @@ fn a_rotated_placement_is_measured_by_its_edge_lengths() {
         report.images_recompressed, 1,
         "a rotated image should still be measured, skips: {:?}",
         report.skipped
+    );
+}
+
+/// A 1000 pixel photo-like image, deflated after a predictor, drawn into a
+/// 100 point box: 720 dpi, so there is plenty to take away.
+fn predicted(workspace: &Workspace, name: &str, predictor: Predictor) -> std::path::PathBuf {
+    workspace.write(
+        name,
+        common::build_with_predicted_image(
+            1000,
+            1000,
+            ImagePlacement::drawn(100.0, 100.0),
+            predictor,
+        ),
+    )
+}
+
+/// The only image stream in a saved document.
+fn only_image(path: &std::path::Path) -> lopdf::Stream {
+    let doc = lopdf::Document::load(path).unwrap();
+    let mut images: Vec<lopdf::Stream> = doc
+        .objects
+        .into_values()
+        .filter_map(|object| match object {
+            lopdf::Object::Stream(stream)
+                if stream
+                    .dict
+                    .get(b"Subtype")
+                    .and_then(|s| s.as_name_str())
+                    .ok()
+                    == Some("Image") =>
+            {
+                Some(stream)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 1, "expected exactly one image");
+    images.pop().unwrap()
+}
+
+/// Mean absolute difference per sample between two equally sized buffers.
+fn mean_difference(a: &[u8], b: &[u8]) -> f64 {
+    assert_eq!(a.len(), b.len());
+    let total: u64 = a
+        .iter()
+        .zip(b)
+        .map(|(&x, &y)| u64::from(x.abs_diff(y)))
+        .sum();
+    total as f64 / a.len() as f64
+}
+
+/// Compress a predicted image and check that it shrank, was resampled, and
+/// still shows the same picture.
+fn check_predicted_image_is_recompressed(predictor: Predictor) {
+    let workspace = Workspace::new();
+    let input = predicted(&workspace, "in.pdf", predictor);
+    let out = workspace.join("out.pdf");
+
+    let mut doc = Document::open(&input).unwrap();
+    let report = pdf_core::compress(&mut doc, CompressLevel::Screen).unwrap();
+    doc.save(&out).unwrap();
+
+    assert_eq!(
+        report.images_recompressed, 1,
+        "the predicted image should be recompressed, skips: {:?}",
+        report.skipped
+    );
+
+    let before = std::fs::metadata(&input).unwrap().len();
+    let after = std::fs::metadata(&out).unwrap().len();
+    assert!(
+        after * 2 < before,
+        "{after} should be well under half of {before}"
+    );
+
+    // Still opens, still one page.
+    assert_eq!(Document::open(&out).unwrap().page_count(), 1);
+
+    // 720 dpi down to 72 is a tenth, so roughly 100 pixels across.
+    let stream = only_image(&out);
+    assert_eq!(
+        stream.dict.get(b"Filter").unwrap().as_name_str().unwrap(),
+        "DCTDecode"
+    );
+    assert!(stream.dict.get(b"DecodeParms").is_err());
+
+    let decoded = image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
+        .unwrap()
+        .to_rgb8();
+    let (width, height) = decoded.dimensions();
+    assert!(
+        (95..=105).contains(&width),
+        "expected about 100 pixels, got {width}"
+    );
+    assert_eq!(width, height, "aspect ratio should be preserved");
+    assert_eq!(
+        i64::from(width),
+        stream.dict.get(b"Width").unwrap().as_i64().unwrap()
+    );
+
+    // The picture must survive: a predictor reversed wrongly smears errors
+    // down and across the image, leaving it nothing like the original.
+    let expected = image::imageops::resize(
+        &common::soft_photo_pixels(1000, 1000),
+        width,
+        height,
+        image::imageops::Lanczos3,
+    );
+    let difference = mean_difference(expected.as_raw(), decoded.as_raw());
+    assert!(
+        difference < 4.0,
+        "recompressed image differs from the original by {difference:.1} per sample"
+    );
+}
+
+#[test]
+fn a_png_predicted_image_is_recompressed() {
+    check_predicted_image_is_recompressed(Predictor::Png);
+}
+
+#[test]
+fn a_tiff_predicted_image_is_recompressed() {
+    check_predicted_image_is_recompressed(Predictor::Tiff);
+}
+
+#[test]
+fn an_unknown_predictor_is_skipped_rather_than_misread() {
+    let workspace = Workspace::new();
+
+    let mut doc = common::build_with_predicted_image(
+        1000,
+        1000,
+        ImagePlacement::drawn(100.0, 100.0),
+        Predictor::Png,
+    );
+    for object in doc.objects.values_mut() {
+        if let lopdf::Object::Stream(stream) = object {
+            if let Ok(lopdf::Object::Dictionary(parms)) = stream.dict.get_mut(b"DecodeParms") {
+                parms.set("Predictor", lopdf::Object::Integer(7));
+            }
+        }
+    }
+    let input = workspace.write("in.pdf", doc);
+
+    let mut doc = Document::open(&input).unwrap();
+    let report = pdf_core::compress(&mut doc, CompressLevel::Screen).unwrap();
+
+    assert_eq!(report.images_recompressed, 0);
+    assert_eq!(report.skipped.get(&SkipReason::UnsupportedFilter), Some(&1));
+}
+
+/// MuPDF reverses the predictor itself when it renders the original, so the
+/// original and the compressed page should look alike where the image is.
+#[cfg(feature = "render")]
+#[test]
+fn a_compressed_predicted_image_renders_like_the_original() {
+    use pdf_core::render::{PageRenderer, Scale};
+
+    let workspace = Workspace::new();
+    let input = predicted(&workspace, "in.pdf", Predictor::Png);
+    let out = workspace.join("out.pdf");
+
+    let mut doc = Document::open(&input).unwrap();
+    pdf_core::compress(&mut doc, CompressLevel::Ebook).unwrap();
+    doc.save(&out).unwrap();
+
+    let original = PageRenderer::open(&input)
+        .unwrap()
+        .render(0, Scale::Dpi(72.0))
+        .unwrap();
+    let compressed = PageRenderer::open(&out)
+        .unwrap()
+        .render(0, Scale::Dpi(72.0))
+        .unwrap();
+    assert_eq!(
+        (original.width, original.height),
+        (compressed.width, compressed.height)
+    );
+
+    // The image sits at (50, 100) in PDF space, 100 points square; at 72 dpi
+    // and with y flipped, that is columns 50 to 150 and rows 642 to 742. Stay
+    // a couple of pixels inside to keep clear of antialiased edges.
+    let region = |page: &pdf_core::RenderedPage| -> Vec<u8> {
+        let stride = page.stride();
+        let channels = page.channels as usize;
+        (644..740)
+            .flat_map(|row| {
+                let start = row * stride + 52 * channels;
+                page.pixels[start..start + 96 * channels].to_vec()
+            })
+            .collect()
+    };
+    let (before, after) = (region(&original), region(&compressed));
+
+    assert!(
+        after.iter().any(|&sample| sample != 255),
+        "the image area rendered blank"
+    );
+    let difference = mean_difference(&before, &after);
+    assert!(
+        difference < 4.0,
+        "rendered image differs from the original by {difference:.1} per sample"
     );
 }

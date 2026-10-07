@@ -360,6 +360,10 @@ saves correctly.
 2. Flatpak manifest bundling GTK4 and MuPDF for Fedora, Arch, and the rest.
 3. AppImage as an optional portable build.
 4. Desktop entry, icon, and man page generated from `clap`.
+5. Added afterwards: CI on every push and pull request, and a GitHub release
+   for every `v*` tag carrying the `.deb`, a portable tarball with an install
+   script, and a Flatpak bundle. The AppImage was dropped in favour of the
+   tarball, which covers the same ground with less to maintain.
 
 ---
 

@@ -49,12 +49,19 @@ A Linux-first PDF toolkit. Merge, split, rotate, reorder and delete pages,
 shrink documents by resampling their images, convert to and from images and
 office formats, and add a searchable text layer to scans. Ships a command-line
 tool and a GTK4 desktop application over one shared library."""
+# No Debian revision suffix: there is one package per upstream version, and
+# `foolscap_0.1.0_amd64.deb` is the name the install instructions give.
+revision = ""
 section = "utils"
 priority = "optional"
+# The desktop entry and metainfo are named after the application id the GUI
+# registers. On Wayland that id is how the desktop matches a running window to
+# its entry, so a differently named file leaves the window with a generic icon.
 assets = [
     ["target/release/foolscap", "usr/bin/", "755"],
     ["target/release/foolscap-gui", "usr/bin/", "755"],
-    ["../../packaging/foolscap.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/com.github.sarcastic_soul.Foolscap.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/com.github.sarcastic_soul.Foolscap.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../packaging/foolscap.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["../../dist/man/*.1", "usr/share/man/man1/", "644"],
     ["../../dist/completions/foolscap.bash", "usr/share/bash-completion/completions/foolscap", "644"],

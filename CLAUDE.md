@@ -19,7 +19,7 @@ the logic, consumed by a CLI now and a GTK4 desktop application later.
 belongs in which stage — read it before adding a feature, and update it when
 scope changes.
 
-Current state: all seven planned stages are built. 217 tests pass and
+Current state: all seven planned stages are built. 232 tests pass and
 `clippy -D warnings` is clean across every feature combination.
 
 ## Commands
@@ -127,11 +127,22 @@ subtracting one inline — off-by-one errors here corrupt output silently.
 
 ## Traps already identified
 
-- `lopdf` *succeeds* at loading an encrypted PDF — the object structure parses
-  fine and every string and stream inside it is ciphertext. `Document::open`
-  therefore checks `is_encrypted()` after loading and returns
-  `PdfError::Encrypted`; without that check the failure surfaces much later as
-  nonsense content.
+- `lopdf` *succeeds* at loading a PDF it cannot decrypt. It tries the empty
+  user password itself, and when that fails it returns `Ok` with a document
+  that has almost no objects but still carries `/Encrypt` in its trailer.
+  `Document::open_with` therefore checks the trailer after every load and
+  returns `PdfError::Encrypted` (no password given) or `PdfError::WrongPassword`;
+  without that check the failure surfaces much later as a missing page tree.
+  A document that did decrypt has `/Encrypt` removed, so saving it writes a
+  plain file — including for owner-restricted files that opened without asking.
+- Every way of opening a file takes the password the same way: `open`,
+  `open_with_password`, and `open_with(path, Option<&str>)` on both `Document`
+  and `PageRenderer`. Operations with an options struct carry
+  `password: Option<String>`; the rest take `password: Option<&str>` on their
+  full form. One password is offered to every input and ignored by files that
+  do not need one.
+- Poppler misreads an AES-256 file whose `/Encrypt` dictionary has no
+  `/Length`, which lopdf omits. The test fixtures add `/Length 256`.
 - Writing a document mutates it: `save` appends a cross-reference stream object.
   Measuring a document's serialised size must therefore be done on a clone, or
   the number will not match the file that is written next.

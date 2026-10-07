@@ -27,7 +27,7 @@ pub struct Args {
     output: PathBuf,
 }
 
-pub fn run(args: Args, force: bool) -> Result<()> {
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     let spec = match (&args.pages, args.every) {
         (Some(spec), _) => SplitSpec::Extract(PageRange::parse(spec)?),
         (None, Some(size)) => SplitSpec::Every(size),
@@ -37,7 +37,7 @@ pub fn run(args: Args, force: bool) -> Result<()> {
 
     // Check every output name before writing any of them, so that a collision
     // on the last piece does not leave the earlier ones already overwritten.
-    for path in pdf_core::split_plan(&args.input, &spec, &args.output)? {
+    for path in pdf_core::split_plan(&args.input, &spec, &args.output, password)? {
         guard_output(&path, force)?;
     }
 
@@ -47,8 +47,13 @@ pub fn run(args: Args, force: bool) -> Result<()> {
         tracing::info!("{}", progress.message);
     };
 
-    let written =
-        pdf_core::split_with_progress(&args.input, &spec, &args.output, Some(&mut report))?;
+    let written = pdf_core::split_with_progress(
+        &args.input,
+        &spec,
+        &args.output,
+        password,
+        Some(&mut report),
+    )?;
 
     for path in &written {
         println!("{}", path.display());

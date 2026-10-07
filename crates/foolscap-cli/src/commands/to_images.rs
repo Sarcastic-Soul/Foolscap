@@ -41,7 +41,7 @@ pub struct Args {
     output: PathBuf,
 }
 
-pub fn run(args: Args, force: bool) -> Result<()> {
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     if !(args.dpi.is_finite() && args.dpi > 0.0) {
         anyhow::bail!("--dpi must be a positive number, got {}", args.dpi);
     }
@@ -57,6 +57,7 @@ pub fn run(args: Args, force: bool) -> Result<()> {
             Format::Jpeg => ImageFormat::Jpeg,
         },
         quality: args.quality,
+        password: password.map(str::to_string),
     };
 
     for path in pdf_core::convert::plan(&args.input, &args.output, &options)? {

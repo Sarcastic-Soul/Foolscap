@@ -12,8 +12,8 @@ pub struct Args {
     input: PathBuf,
 }
 
-pub fn run(args: Args) -> Result<()> {
-    let doc = Document::open(&args.input)?;
+pub fn run(args: Args, password: Option<&str>) -> Result<()> {
+    let doc = Document::open_with(&args.input, password)?;
     let size = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
     let metadata = doc.metadata()?;
 
@@ -21,6 +21,10 @@ pub fn run(args: Args) -> Result<()> {
     println!("size       {}", human_bytes(size));
     println!("pages      {}", doc.page_count());
     println!("version    {}", doc.version());
+    println!(
+        "encrypted  {}",
+        if doc.was_encrypted() { "yes" } else { "no" }
+    );
 
     let fields = [
         ("title", &metadata.title),

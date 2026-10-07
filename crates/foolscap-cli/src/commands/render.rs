@@ -47,12 +47,12 @@ pub struct ThumbnailArgs {
     output: PathBuf,
 }
 
-pub fn render(args: RenderArgs, force: bool) -> Result<()> {
+pub fn render(args: RenderArgs, force: bool, password: Option<&str>) -> Result<()> {
     if !(args.dpi.is_finite() && args.dpi > 0.0) {
         anyhow::bail!("--dpi must be a positive number, got {}", args.dpi);
     }
 
-    let renderer = PageRenderer::open(&args.input)?;
+    let renderer = PageRenderer::open_with(&args.input, password)?;
     let selected = PageRange::parse(&args.pages)?.resolve(renderer.page_count())?;
 
     let stem = args
@@ -86,7 +86,7 @@ pub fn render(args: RenderArgs, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn thumbnail(args: ThumbnailArgs, force: bool) -> Result<()> {
+pub fn thumbnail(args: ThumbnailArgs, force: bool, password: Option<&str>) -> Result<()> {
     if args.page == 0 {
         anyhow::bail!("page numbers start at 1");
     }
@@ -96,7 +96,7 @@ pub fn thumbnail(args: ThumbnailArgs, force: bool) -> Result<()> {
 
     guard_output(&args.output, force)?;
 
-    let renderer = PageRenderer::open(&args.input)?;
+    let renderer = PageRenderer::open_with(&args.input, password)?;
     let rendered = renderer.thumbnail(args.page - 1, args.size)?;
     write_png(&rendered, &args.output)?;
 

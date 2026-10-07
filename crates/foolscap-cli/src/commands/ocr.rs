@@ -47,7 +47,7 @@ pub struct ExtractTextArgs {
     output: Option<PathBuf>,
 }
 
-pub fn run(args: OcrArgs, force: bool) -> Result<()> {
+pub fn run(args: OcrArgs, force: bool, password: Option<&str>) -> Result<()> {
     if !(args.dpi.is_finite() && args.dpi > 0.0) {
         anyhow::bail!("--dpi must be a positive number, got {}", args.dpi);
     }
@@ -58,6 +58,7 @@ pub fn run(args: OcrArgs, force: bool) -> Result<()> {
         language: args.lang,
         dpi: args.dpi,
         skip_pages_with_text: !args.redo,
+        password: password.map(str::to_string),
     };
 
     let mut report_progress = |progress: pdf_core::Progress| {
@@ -89,12 +90,12 @@ pub fn run(args: OcrArgs, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn extract_text(args: ExtractTextArgs, force: bool) -> Result<()> {
+pub fn extract_text(args: ExtractTextArgs, force: bool, password: Option<&str>) -> Result<()> {
     if let Some(output) = &args.output {
         guard_output(output, force)?;
     }
 
-    let renderer = PageRenderer::open(&args.input)?;
+    let renderer = PageRenderer::open_with(&args.input, password)?;
     let selected = PageRange::parse(&args.pages)?.resolve(renderer.page_count())?;
 
     let mut text = String::new();

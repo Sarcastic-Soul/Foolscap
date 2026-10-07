@@ -13,7 +13,9 @@ authors = ["Anish Kumar <anishisbusy@gmail.com>"]
 [workspace.dependencies]
 pdf-core = { path = "crates/pdf-core" }
 
-lopdf = "0.34"
+# 0.44 for password authentication and AES-256 (revision 6) decryption.
+# Default features pull in rayon and three date-time crates, none of them used.
+lopdf = { version = "0.44", default-features = false }
 mupdf = { version = "0.8", default-features = false, features = ["base14-fonts"] }
 image = { version = "0.25", default-features = false }
 flate2 = "1"
@@ -28,7 +30,8 @@ tracing = "0.1"
 
 anyhow = "1"
 # "string" lets the asset generator name subcommand man pages at run time.
-clap = { version = "4", features = ["derive", "string"] }
+# "env" lets --password be supplied through FOOLSCAP_PASSWORD.
+clap = { version = "4", features = ["derive", "string", "env"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]

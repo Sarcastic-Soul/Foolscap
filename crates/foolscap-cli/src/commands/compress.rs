@@ -41,14 +41,14 @@ pub struct Args {
     output: PathBuf,
 }
 
-pub fn run(args: Args, force: bool) -> Result<()> {
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     guard_output(&args.output, force)?;
 
     let mut report_progress = |progress: pdf_core::Progress| {
         tracing::info!("{}", progress.message);
     };
 
-    let mut doc = Document::open(&args.input)?;
+    let mut doc = Document::open_with(&args.input, password)?;
     let report =
         pdf_core::compress_with_progress(&mut doc, args.level.into(), Some(&mut report_progress))?;
     doc.save(&args.output)?;

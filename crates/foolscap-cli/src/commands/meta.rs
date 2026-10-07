@@ -57,7 +57,7 @@ impl Args {
     }
 }
 
-pub fn run(args: Args, force: bool) -> Result<()> {
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     let edit = args.edit();
     if edit.is_empty() {
         bail!("nothing to change; pass at least one --set-* or --clear-* option");
@@ -65,7 +65,7 @@ pub fn run(args: Args, force: bool) -> Result<()> {
 
     guard_output(&args.output, force)?;
 
-    let mut doc = Document::open(&args.input)?;
+    let mut doc = Document::open_with(&args.input, password)?;
     let updated = edit.apply(&doc.metadata()?);
     doc.set_metadata(&updated)?;
     doc.save(&args.output)?;

@@ -20,8 +20,21 @@ pub enum PdfError {
         source: std::io::Error,
     },
 
-    #[error("{0} is encrypted; Foolscap cannot open password-protected documents yet")]
+    /// The document needs a password and none was supplied. Documents whose
+    /// user password is empty open without one, so this means a real
+    /// password is required.
+    #[error("{0} is encrypted and needs a password")]
     Encrypted(PathBuf),
+
+    /// A password was supplied and it is neither the user nor the owner
+    /// password.
+    #[error("wrong password for {0}")]
+    WrongPassword(PathBuf),
+
+    /// The document is encrypted with a scheme that cannot be read, such as a
+    /// certificate-based security handler.
+    #[error("{path} uses encryption Foolscap cannot read: {reason}")]
+    UnsupportedEncryption { path: PathBuf, reason: String },
 
     #[error("{path} is not a valid PDF: {reason}")]
     Malformed { path: PathBuf, reason: String },

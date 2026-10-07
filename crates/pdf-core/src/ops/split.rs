@@ -22,27 +22,38 @@ pub enum SplitSpec {
 /// stem: `report-extract.pdf` for an extraction, `report-001.pdf` and onwards
 /// for a burst.
 pub fn split(input: &Path, spec: &SplitSpec, out_dir: &Path) -> Result<Vec<PathBuf>> {
-    split_with_progress(input, spec, out_dir, None)
+    split_with_progress(input, spec, out_dir, None, None)
 }
 
 /// The paths [`split`] would write, without writing anything.
 ///
 /// Callers that want to ask before overwriting need the names in advance;
 /// deriving them here rather than in the caller keeps one naming scheme.
-pub fn plan(input: &Path, spec: &SplitSpec, out_dir: &Path) -> Result<Vec<PathBuf>> {
-    let page_count = Document::open(input)?.page_count();
+/// Counting the pages means opening the document, hence the `password`.
+pub fn plan(
+    input: &Path,
+    spec: &SplitSpec,
+    out_dir: &Path,
+    password: Option<&str>,
+) -> Result<Vec<PathBuf>> {
+    let page_count = Document::open_with(input, password)?.page_count();
     let chunks = chunks(spec, page_count)?;
     Ok(output_paths(input, spec, out_dir, chunks.len()))
 }
 
 /// [`split`], reporting one progress tick per output file written.
+///
+/// `password` is used only if `input` needs one. The pieces are written
+/// unencrypted.
 pub fn split_with_progress(
     input: &Path,
     spec: &SplitSpec,
     out_dir: &Path,
+    password: Option<&str>,
     mut progress: Option<ProgressFn<'_>>,
 ) -> Result<Vec<PathBuf>> {
-    let page_count = Document::open(input)?.page_count();
+    let source_doc = Document::open_with(input, password)?;
+    let page_count = source_doc.page_count();
     let chunks = chunks(spec, page_count)?;
 
     let total = chunks.len();
@@ -59,10 +70,10 @@ pub fn split_with_progress(
         }
 
         // Each output needs its own copy of the source: assembly consumes the
-        // document it is given.
-        let source_doc = Document::open(input)?;
+        // document it is given. Cloning is cheaper than parsing, and
+        // decrypting, the file again.
         let assembled = assemble(vec![Source {
-            doc: source_doc.inner,
+            doc: source_doc.inner.clone(),
             pages,
         }])?;
         Document::from_lopdf(assembled, None).save(&path)?;

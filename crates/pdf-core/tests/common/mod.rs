@@ -151,9 +151,7 @@ pub fn page_labels(path: &Path) -> Vec<String> {
     doc.get_pages()
         .into_values()
         .map(|page_id| {
-            let content = doc
-                .get_page_content(page_id)
-                .expect("page has no content stream");
+            let content = doc.get_page_content(page_id);
             let decoded = Content::decode(&content).expect("could not decode content stream");
 
             decoded
@@ -370,12 +368,8 @@ pub fn image_summaries(path: &Path) -> Vec<(u32, u32, usize)> {
             let Object::Stream(stream) = object else {
                 return None;
             };
-            if stream
-                .dict
-                .get(b"Subtype")
-                .and_then(Object::as_name_str)
-                .ok()
-                != Some("Image")
+            if stream.dict.get(b"Subtype").and_then(Object::as_name).ok()
+                != Some(b"Image".as_slice())
             {
                 return None;
             }
@@ -438,6 +432,105 @@ pub fn build_text_page(words: &str, size: f32) -> Document {
     doc.trailer.set("Root", catalog_id);
 
     doc
+}
+
+/// The encryption schemes the password tests cover, from the oldest still in
+/// circulation to what current producers write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cipher {
+    /// RC4 with a 128-bit key: security handler revision 3.
+    Rc4,
+    /// AES-128: revision 4, with crypt filters.
+    Aes128,
+    /// AES-256: revision 6, the PDF 2.0 scheme.
+    Aes256,
+}
+
+pub const CIPHERS: [Cipher; 3] = [Cipher::Rc4, Cipher::Aes128, Cipher::Aes256];
+
+/// Encrypt a generated document in place.
+///
+/// An empty `user_password` makes the kind of file most encrypted PDFs in the
+/// wild are: restricted by an owner password, but readable by anyone.
+pub fn encrypt(doc: &mut Document, cipher: Cipher, user_password: &str, owner_password: &str) {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use lopdf::encryption::crypt_filters::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter};
+    use lopdf::{EncryptionState, EncryptionVersion, Permissions};
+
+    // The older handlers mix the file identifier into the key, so a document
+    // without one cannot be encrypted with them.
+    let id = Object::string_literal(b"foolscap-fixture".to_vec());
+    doc.trailer.set("ID", Object::Array(vec![id.clone(), id]));
+
+    // Restricted, as an owner password usually is, so that opening the file
+    // is plainly not the same as having full permission over it.
+    let permissions = Permissions::PRINTABLE;
+    // Fixed rather than random: fixtures should be reproducible.
+    let file_key = [7u8; 32];
+
+    let version = match cipher {
+        Cipher::Rc4 => EncryptionVersion::V2 {
+            document: doc,
+            owner_password,
+            user_password,
+            key_length: 128,
+            permissions,
+        },
+        Cipher::Aes128 => {
+            let filter: Arc<dyn CryptFilter> = Arc::new(Aes128CryptFilter);
+            EncryptionVersion::V4 {
+                document: doc,
+                encrypt_metadata: true,
+                crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), filter)]),
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password,
+                user_password,
+                permissions,
+            }
+        }
+        Cipher::Aes256 => {
+            let filter: Arc<dyn CryptFilter> = Arc::new(Aes256CryptFilter);
+            EncryptionVersion::V5 {
+                encrypt_metadata: true,
+                crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), filter)]),
+                file_encryption_key: &file_key,
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password,
+                user_password,
+                permissions,
+            }
+        }
+    };
+
+    let state = EncryptionState::try_from(version).expect("could not set up encryption");
+    doc.encrypt(&state).expect("could not encrypt fixture");
+
+    // lopdf leaves /Length out of an AES-256 dictionary. The standard makes it
+    // optional there, but Poppler then assumes a short key and decrypts the
+    // file into garbage, so state it as every other AES-256 producer does.
+    if cipher == Cipher::Aes256 {
+        let encrypt_id = doc
+            .trailer
+            .get(b"Encrypt")
+            .and_then(Object::as_reference)
+            .expect("encrypting should add an /Encrypt reference");
+        doc.get_dictionary_mut(encrypt_id)
+            .expect("the /Encrypt dictionary should exist")
+            .set("Length", 256);
+    }
+}
+
+/// Whether a file declares encryption, read from its bytes rather than through
+/// a PDF library that might decrypt it on the way.
+pub fn declares_encryption(path: &Path) -> bool {
+    let bytes = std::fs::read(path).expect("could not read file");
+    bytes
+        .windows(b"/Encrypt".len())
+        .any(|window| window == b"/Encrypt")
 }
 
 /// A one-page document whose only content is the supplied JPEG.

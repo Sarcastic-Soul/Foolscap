@@ -97,9 +97,7 @@ pub(crate) fn measure_images(doc: &lopdf::Document) -> HashMap<ObjectId, Placeme
     let mut placements = HashMap::new();
 
     for page_id in doc.get_pages().into_values() {
-        let Ok(content) = doc.get_page_content(page_id) else {
-            continue;
-        };
+        let content = doc.get_page_content(page_id);
         let Ok(decoded) = Content::decode(&content) else {
             tracing::debug!(?page_id, "could not decode page content stream");
             continue;
@@ -178,15 +176,15 @@ fn walk(
                     continue;
                 };
 
-                match dict.get(b"Subtype").and_then(Object::as_name_str).ok() {
-                    Some("Image") => {
+                match dict.get(b"Subtype").and_then(Object::as_name).ok() {
+                    Some(b"Image") => {
                         let placement = ctm.unit_square_size();
                         placements
                             .entry(id)
                             .and_modify(|existing| existing.merge(placement))
                             .or_insert(placement);
                     }
-                    Some("Form") if depth < MAX_FORM_DEPTH => {
+                    Some(b"Form") if depth < MAX_FORM_DEPTH => {
                         walk_form(doc, id, &dict, resources, ctm, depth, placements);
                     }
                     _ => {}

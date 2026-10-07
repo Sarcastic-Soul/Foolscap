@@ -24,11 +24,11 @@ pub struct Args {
     output: PathBuf,
 }
 
-pub fn run(args: Args, force: bool) -> Result<()> {
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     guard_output(&args.output, force)?;
 
     let range = PageRange::parse(&args.pages)?;
-    let mut doc = Document::open(&args.input)?;
+    let mut doc = Document::open_with(&args.input, password)?;
 
     pdf_core::rotate(&mut doc, &range, args.degrees)?;
     doc.save(&args.output)?;

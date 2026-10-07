@@ -21,7 +21,12 @@ const MAX_VIEW_DPI: f32 = 600.0;
 /// Work the user interface asks for.
 #[derive(Debug)]
 pub enum Request {
-    Open(PathBuf),
+    /// Open a document. `password` is needed only for a file that asks for
+    /// one; a file unlocked earlier in the session reopens without it.
+    Open {
+        path: PathBuf,
+        password: Option<String>,
+    },
     /// Draw a page. `generation` lets stale results be discarded when the
     /// document has been replaced since the request went out.
     Render {
@@ -49,10 +54,12 @@ pub enum Request {
         dpi: f32,
         edits: Edits,
     },
-    /// Combine several files into `output`, then open it.
+    /// Combine several files into `output`, then open it. `unlock` is a
+    /// password for one of the inputs, given after the merge asked for it.
     Merge {
         inputs: Vec<PathBuf>,
         output: PathBuf,
+        unlock: Option<(PathBuf, String)>,
     },
     Quit,
 }
@@ -139,6 +146,8 @@ pub enum Response {
     },
     Saved {
         path: PathBuf,
+        /// The original was encrypted, and the copy written is not.
+        unprotected: bool,
     },
     Finished {
         message: String,
@@ -167,6 +176,10 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
     // Private copies of files that were overwritten while open. They live as
     // long as the window, since undo may still need their pages.
     let mut copies: Vec<Temporary> = Vec::new();
+    // Passwords for the files unlocked this session, so that the open
+    // document, its private copies and earlier documents that undo may return
+    // to can all be read again. Held in memory only.
+    let mut passwords = Passwords::default();
 
     let say = |response: Response| {
         // A closed channel means the window has gone; there is nothing useful
@@ -180,14 +193,20 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
         match request {
             Request::Quit => break,
 
-            Request::Open(path) => match PageRenderer::open(&path) {
-                Ok(opened) => {
-                    let page_count = opened.page_count();
-                    renderer = Some(opened);
-                    say(Response::Opened { path, page_count });
+            Request::Open { path, password } => {
+                let password = password.or_else(|| passwords.get(&path).map(str::to_string));
+                match PageRenderer::open_with(&path, password.as_deref()) {
+                    Ok(opened) => {
+                        if let Some(password) = password {
+                            passwords.insert(&path, password);
+                        }
+                        let page_count = opened.page_count();
+                        renderer = Some(opened);
+                        say(Response::Opened { path, page_count });
+                    }
+                    Err(error) => fail(Task::Open, error),
                 }
-                Err(error) => fail(Task::Open, error),
-            },
+            }
 
             Request::Render {
                 page,
@@ -212,25 +231,29 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
             }
 
             Request::Save { path, edits } => {
-                let result = protect_source(&mut renderer, &mut copies, &path, &say)
-                    .and_then(|source| write_edited(&source, &path, &edits));
+                let result =
+                    protect_source(&mut renderer, &mut copies, &mut passwords, &path, &say)
+                        .and_then(|source| write_edited(&source, &passwords, &path, &edits));
 
                 match result {
-                    Ok(()) => say(Response::Saved { path }),
+                    Ok(unprotected) => say(Response::Saved { path, unprotected }),
                     Err(error) => fail(Task::Save, error),
                 }
             }
 
             Request::Compress { path, level, edits } => {
                 let result = (|| -> pdf_core::Result<String> {
-                    let source = protect_source(&mut renderer, &mut copies, &path, &say)?;
-                    let mut doc = stage(&source, &edits)?.document;
+                    let source =
+                        protect_source(&mut renderer, &mut copies, &mut passwords, &path, &say)?;
+                    let mut doc = stage(&source, &passwords, &edits)?.document;
+                    let unprotected = doc.was_encrypted();
                     let report = pdf_core::compress(&mut doc, level)?;
                     save_atomically(&mut doc, &path)?;
                     Ok(format!(
-                        "Compressed to {} ({:.0}% smaller)",
+                        "Compressed to {} ({:.0}% smaller){}",
                         path.display(),
-                        report.ratio_saved() * 100.0
+                        report.ratio_saved() * 100.0,
+                        unprotected_note(unprotected)
                     ))
                 })();
 
@@ -246,11 +269,15 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 edits,
             } => {
                 let result = (|| -> pdf_core::Result<String> {
-                    let source = protect_source(&mut renderer, &mut copies, &path, &say)?;
+                    let source =
+                        protect_source(&mut renderer, &mut copies, &mut passwords, &path, &say)?;
 
                     // Recognition works from a file, so the edited document has
-                    // to exist on disk first.
-                    let intermediate = stage(&source, &edits)?.write_temporary()?;
+                    // to exist on disk first. It is written decrypted, so no
+                    // password is needed past this point.
+                    let staged = stage(&source, &passwords, &edits)?;
+                    let unprotected = staged.document.was_encrypted();
+                    let intermediate = staged.write_temporary()?;
 
                     let options = pdf_core::OcrOptions {
                         language,
@@ -266,9 +293,10 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                     )?;
 
                     Ok(format!(
-                        "Recognised {} page(s) into {}",
+                        "Recognised {} page(s) into {}{}",
                         report.pages_recognised,
-                        path.display()
+                        path.display(),
+                        unprotected_note(unprotected)
                     ))
                 })();
 
@@ -285,7 +313,7 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
             } => {
                 let result = (|| -> pdf_core::Result<String> {
                     let source = current_source(&renderer)?;
-                    let intermediate = stage(&source, &edits)?.write_temporary()?;
+                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
 
                     let options = pdf_core::convert::PdfToImagesOptions {
                         dpi,
@@ -311,17 +339,46 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 }
             }
 
-            Request::Merge { inputs, output } => {
+            Request::Merge {
+                inputs,
+                output,
+                unlock,
+            } => {
                 let result = (|| -> pdf_core::Result<PageRenderer> {
                     // Merging over the open file is allowed; the private copy
                     // keeps the way back to it for undo.
                     if renderer.is_some() {
-                        protect_source(&mut renderer, &mut copies, &output, &say)?;
+                        protect_source(&mut renderer, &mut copies, &mut passwords, &output, &say)?;
+                    }
+
+                    // Each protected input may have its own password and the
+                    // merge takes only one, so unlocked inputs are first
+                    // written out decrypted beside the output, which will hold
+                    // the same pages unencrypted anyway.
+                    let mut decrypted = Vec::new();
+                    let mut sources = Vec::with_capacity(inputs.len());
+                    for input in &inputs {
+                        let password = match &unlock {
+                            Some((path, password)) if path == input => Some(password.clone()),
+                            _ => passwords.get(input).map(str::to_string),
+                        };
+                        let Some(password) = password else {
+                            sources.push(input.clone());
+                            continue;
+                        };
+
+                        let mut doc = Document::open_with(input, Some(&password))?;
+                        passwords.insert(input, password);
+                        let copy = Temporary::beside(&output);
+                        doc.save(copy.path())?;
+                        sources.push(copy.path().to_path_buf());
+                        decrypted.push(copy);
                     }
 
                     let scratch = Temporary::beside(&output);
                     let mut tick = tick;
-                    pdf_core::merge_with_progress(&inputs, scratch.path(), None, Some(&mut tick))?;
+                    pdf_core::merge_with_progress(&sources, scratch.path(), None, Some(&mut tick))?;
+                    drop(decrypted);
                     scratch.persist(&output)?;
 
                     PageRenderer::open(&output)
@@ -389,6 +446,7 @@ fn current_source(renderer: &Option<PageRenderer>) -> pdf_core::Result<PathBuf> 
 fn protect_source(
     renderer: &mut Option<PageRenderer>,
     copies: &mut Vec<Temporary>,
+    passwords: &mut Passwords,
     destination: &Path,
     say: &impl Fn(Response),
 ) -> pdf_core::Result<PathBuf> {
@@ -403,8 +461,13 @@ fn protect_source(
         source: error,
     })?;
 
-    let reopened = PageRenderer::open(copy.path())?;
+    // A byte-for-byte copy, so it needs the same password as the original.
+    let password = passwords.get(&source).map(str::to_string);
+    let reopened = PageRenderer::open_with(copy.path(), password.as_deref())?;
     let moved_to = copy.path().to_path_buf();
+    if let Some(password) = password {
+        passwords.insert(&moved_to, password);
+    }
     *renderer = Some(reopened);
     copies.push(copy);
 
@@ -509,8 +572,8 @@ fn unique() -> String {
 }
 
 /// Apply the pending edits to a fresh copy of the document on disk.
-fn stage(source: &Path, edits: &Edits) -> pdf_core::Result<Staged> {
-    let mut doc = Document::open(source)?;
+fn stage(source: &Path, passwords: &Passwords, edits: &Edits) -> pdf_core::Result<Staged> {
+    let mut doc = Document::open_with(source, passwords.get(source))?;
 
     // Nothing was changed, so there is nothing to rebuild. Rearranging a
     // document into the order it is already in would still rewrite every page
@@ -554,9 +617,42 @@ fn save_atomically(document: &mut Document, destination: &Path) -> pdf_core::Res
     scratch.persist(destination)
 }
 
-fn write_edited(source: &Path, destination: &Path, edits: &Edits) -> pdf_core::Result<()> {
-    let mut staged = stage(source, edits)?;
-    save_atomically(&mut staged.document, destination)
+/// Write the edited document, returning whether the original was encrypted;
+/// the copy written never is.
+fn write_edited(
+    source: &Path,
+    passwords: &Passwords,
+    destination: &Path,
+    edits: &Edits,
+) -> pdf_core::Result<bool> {
+    let mut staged = stage(source, passwords, edits)?;
+    let unprotected = staged.document.was_encrypted();
+    save_atomically(&mut staged.document, destination)?;
+    Ok(unprotected)
+}
+
+/// Text added to a status message when the file written dropped the
+/// original's encryption.
+fn unprotected_note(unprotected: bool) -> &'static str {
+    if unprotected {
+        ". Saved without password protection"
+    } else {
+        ""
+    }
+}
+
+/// Passwords by the file they unlock.
+#[derive(Default)]
+struct Passwords(HashMap<PathBuf, String>);
+
+impl Passwords {
+    fn get(&self, path: &Path) -> Option<&str> {
+        self.0.get(path).map(String::as_str)
+    }
+
+    fn insert(&mut self, path: &Path, password: String) {
+        self.0.insert(path.to_path_buf(), password);
+    }
 }
 
 #[cfg(test)]
@@ -661,6 +757,174 @@ mod tests {
 
         assert!(same_file(&file, &dir.join(".").join("a.pdf")));
         assert!(!same_file(&file, &dir.join("missing.pdf")));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Write a one-page PDF with Ghostscript, protected by `password` when
+    /// one is given. Returns false when Ghostscript is not installed.
+    fn ghostscript_pdf(output: &Path, password: Option<&str>) -> bool {
+        let mut command = std::process::Command::new("gs");
+        command.args(["-q", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pdfwrite"]);
+        if let Some(password) = password {
+            command.args([
+                format!("-sUserPassword={password}"),
+                "-sOwnerPassword=owner".to_string(),
+                "-dEncryptionR=3".to_string(),
+                "-dKeyLength=128".to_string(),
+            ]);
+        }
+        command
+            .arg(format!("-sOutputFile={}", output.display()))
+            .args(["-c", "showpage"]);
+        match command.status() {
+            Ok(status) => {
+                assert!(status.success(), "gs failed");
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// The next response that is not a progress report.
+    fn answer(from_worker: &async_channel::Receiver<Response>) -> Response {
+        loop {
+            match from_worker.recv_blocking().expect("worker stopped") {
+                Response::Progress(_) => continue,
+                other => return other,
+            }
+        }
+    }
+
+    #[test]
+    fn a_protected_document_opens_with_its_password_and_saves_unprotected() {
+        let dir = scratch_dir("unlock");
+        let locked = dir.join("locked.pdf");
+        if !ghostscript_pdf(&locked, Some("secret")) {
+            eprintln!("skipping: Ghostscript (gs) is not installed");
+            return;
+        }
+
+        let (to_worker, from_worker) = spawn();
+        let open = |password: Option<&str>| Request::Open {
+            path: locked.clone(),
+            password: password.map(str::to_string),
+        };
+
+        to_worker.send(open(None)).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Failed { task: Task::Open, error: PdfError::Encrypted(path) } if path == locked
+        ));
+
+        to_worker.send(open(Some("wrong"))).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Failed {
+                task: Task::Open,
+                error: PdfError::WrongPassword(_)
+            }
+        ));
+
+        to_worker.send(open(Some("secret"))).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Opened { page_count: 1, .. }
+        ));
+
+        // Saving over the open file moves reads to a private copy, which
+        // needs the same password, then writes an unencrypted file.
+        let mut rotations = HashMap::new();
+        rotations.insert(0, 90);
+        to_worker
+            .send(Request::Save {
+                path: locked.clone(),
+                edits: Edits {
+                    order: vec![0],
+                    rotations,
+                },
+            })
+            .unwrap();
+        assert!(matches!(answer(&from_worker), Response::SourceMoved { .. }));
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Saved {
+                unprotected: true,
+                ..
+            }
+        ));
+        assert_eq!(Document::open(&locked).unwrap().page_count(), 1);
+
+        // Pages still draw from the protected private copy.
+        to_worker
+            .send(Request::Render {
+                page: 0,
+                size: Size::Box(64),
+                purpose: Purpose::Thumbnail,
+                generation: 0,
+            })
+            .unwrap();
+        assert!(matches!(answer(&from_worker), Response::Rendered { .. }));
+
+        to_worker.send(Request::Quit).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_merge_asks_for_each_protected_input() {
+        let dir = scratch_dir("merge-unlock");
+        let plain = dir.join("plain.pdf");
+        let first = dir.join("first.pdf");
+        let second = dir.join("second.pdf");
+        if !ghostscript_pdf(&plain, None) {
+            eprintln!("skipping: Ghostscript (gs) is not installed");
+            return;
+        }
+        ghostscript_pdf(&first, Some("one"));
+        ghostscript_pdf(&second, Some("two"));
+
+        let output = dir.join("merged.pdf");
+        let (to_worker, from_worker) = spawn();
+        let merge = |unlock: Option<(&PathBuf, &str)>| Request::Merge {
+            inputs: vec![plain.clone(), first.clone(), second.clone()],
+            output: output.clone(),
+            unlock: unlock.map(|(path, password)| (path.clone(), password.to_string())),
+        };
+
+        to_worker.send(merge(None)).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Failed { task: Task::Merge, error: PdfError::Encrypted(path) } if path == first
+        ));
+
+        to_worker.send(merge(Some((&first, "two")))).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Failed { task: Task::Merge, error: PdfError::WrongPassword(path) } if path == first
+        ));
+
+        // The first file's password is remembered once it has worked, so the
+        // next attempt stops at the second.
+        to_worker.send(merge(Some((&first, "one")))).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Failed { task: Task::Merge, error: PdfError::Encrypted(path) } if path == second
+        ));
+
+        to_worker.send(merge(Some((&second, "two")))).unwrap();
+        assert!(matches!(
+            answer(&from_worker),
+            Response::Opened { page_count: 3, .. }
+        ));
+        assert_eq!(Document::open(&output).unwrap().page_count(), 3);
+
+        to_worker.send(Request::Quit).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .filter(|name| name.to_string_lossy().starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "stray files: {leftovers:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

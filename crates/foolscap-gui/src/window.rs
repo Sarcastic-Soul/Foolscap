@@ -157,6 +157,9 @@ struct App {
     after_save: RefCell<Option<Continuation>>,
     /// Set once the user has agreed to close despite unsaved changes.
     close_confirmed: Cell<bool>,
+    /// The inputs and output of the merge in progress, kept so it can be tried
+    /// again once a protected input is unlocked.
+    pending_merge: RefCell<Option<(Vec<PathBuf>, PathBuf)>>,
 }
 
 pub fn build(app: &Application, open: Option<PathBuf>) {
@@ -311,6 +314,7 @@ pub fn build(app: &Application, open: Option<PathBuf>) {
         saving: RefCell::new(None),
         after_save: RefCell::new(None),
         close_confirmed: Cell::new(false),
+        pending_merge: RefCell::new(None),
     });
 
     window.connect_close_request(clone!(
@@ -570,7 +574,10 @@ impl App {
         }
         self.open_mode.set(OpenMode::Fresh);
         self.start(&format!("Opening {}…", path.display()));
-        let _ = self.to_worker.send(Request::Open(path));
+        let _ = self.to_worker.send(Request::Open {
+            path,
+            password: None,
+        });
     }
 
     fn handle(self: &Rc<Self>, response: Response) {
@@ -613,13 +620,20 @@ impl App {
                 self.state.borrow_mut().relocate_source(&from, to);
             }
 
-            Response::Saved { path } => {
+            Response::Saved { path, unprotected } => {
                 self.finish();
                 if let Some(written) = self.saving.take() {
                     self.state.borrow_mut().mark_saved(path.clone(), written);
                 }
                 self.refresh_title();
-                self.set_status(&format!("Saved {}", path.display()));
+                if unprotected {
+                    self.set_status(&format!(
+                        "Saved {} without password protection.",
+                        path.display()
+                    ));
+                } else {
+                    self.set_status(&format!("Saved {}", path.display()));
+                }
 
                 let next = self.after_save.take();
                 if let Some(next) = next {
@@ -639,6 +653,20 @@ impl App {
                 if task == Task::Save {
                     self.saving.replace(None);
                     self.after_save.replace(None);
+                }
+                if matches!(task, Task::Open | Task::Merge) {
+                    match error {
+                        PdfError::Encrypted(path) => {
+                            return self.ask_to_unlock(task, path, false);
+                        }
+                        PdfError::WrongPassword(path) => {
+                            return self.ask_to_unlock(task, path, true);
+                        }
+                        _ => {
+                            self.open_mode.set(OpenMode::Fresh);
+                            self.pending_merge.replace(None);
+                        }
+                    }
                 }
                 self.report(task, &error);
             }
@@ -962,7 +990,10 @@ impl App {
             Some(source) => {
                 self.open_mode.set(direction);
                 self.start("Reopening the previous document…");
-                let _ = self.to_worker.send(Request::Open(source));
+                let _ = self.to_worker.send(Request::Open {
+                    path: source,
+                    password: None,
+                });
             }
             None => {
                 let message = {
@@ -1006,12 +1037,75 @@ impl App {
                         return;
                     }
 
-                    app.open_mode.set(OpenMode::Merge);
                     app.start(&format!("Merging {} files…", paths.len()));
-                    let _ = app.to_worker.send(Request::Merge {
-                        inputs: paths,
-                        output,
-                    });
+                    app.merge(paths, output, None);
+                }
+            ),
+        );
+    }
+
+    /// Send a merge to the worker, remembering it in case an input turns out
+    /// to need a password and the merge has to be tried again.
+    fn merge(
+        self: &Rc<Self>,
+        inputs: Vec<PathBuf>,
+        output: PathBuf,
+        unlock: Option<(PathBuf, String)>,
+    ) {
+        self.open_mode.set(OpenMode::Merge);
+        self.pending_merge
+            .replace(Some((inputs.clone(), output.clone())));
+        let _ = self.to_worker.send(Request::Merge {
+            inputs,
+            output,
+            unlock,
+        });
+    }
+
+    /// An open or a merge stopped at a file that needs a password. Ask for
+    /// it, then try again; `wrong` says the last password given did not work.
+    fn ask_to_unlock(self: &Rc<Self>, task: Task, path: PathBuf, wrong: bool) {
+        let merge = if task == Task::Merge {
+            match self.pending_merge.take() {
+                Some(merge) => Some(merge),
+                None => return,
+            }
+        } else {
+            None
+        };
+
+        let locked = path.clone();
+        password_dialog(
+            &self.ui.window,
+            &file_name(&path),
+            wrong,
+            clone!(
+                #[strong(rename_to = app)]
+                self,
+                move |answer| {
+                    let Some(password) = answer else {
+                        app.open_mode.set(OpenMode::Fresh);
+                        app.set_status("Not opened: it needs a password.");
+                        return;
+                    };
+                    if app.refuse_while_busy() {
+                        return;
+                    }
+
+                    app.start("Unlocking…");
+                    match merge {
+                        Some((inputs, output)) => {
+                            app.merge(inputs, output, Some((locked, password)))
+                        }
+                        None => {
+                            // The open mode is still that of the attempt that
+                            // asked for the password.
+                            let _ = app.to_worker.send(Request::Open {
+                                path: locked,
+                                password: Some(password),
+                            });
+                        }
+                    }
                 }
             ),
         );
@@ -1383,6 +1477,156 @@ impl App {
     }
 }
 
+/// The last part of a path, as a user would recognise the file.
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Ask for the password to a protected file. `done` receives the password, or
+/// `None` if the user gave up. `wrong` shows that the last attempt failed.
+fn password_dialog(
+    parent: &ApplicationWindow,
+    name: &str,
+    wrong: bool,
+    done: impl FnOnce(Option<String>) + 'static,
+) {
+    let dialog = gtk4::Window::builder()
+        .title("Unlock Document")
+        .transient_for(parent)
+        .modal(true)
+        .resizable(false)
+        .destroy_with_parent(true)
+        .default_width(380)
+        .build();
+
+    let content = GtkBox::new(Orientation::Vertical, 12);
+    content.set_margin_top(24);
+    content.set_margin_bottom(24);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+
+    let heading = Label::builder()
+        .label(format!("“{name}” is password protected"))
+        .wrap(true)
+        .max_width_chars(40)
+        .xalign(0.0)
+        .css_classes(["title-4"])
+        .build();
+    let detail = Label::builder()
+        .label("Enter its password to open it.")
+        .wrap(true)
+        .max_width_chars(40)
+        .xalign(0.0)
+        .build();
+
+    let entry = gtk4::PasswordEntry::builder()
+        .show_peek_icon(true)
+        .activates_default(true)
+        .hexpand(true)
+        .build();
+    entry.update_property(&[gtk4::accessible::Property::Label("Password")]);
+
+    let problem = Label::builder()
+        .label("Wrong password. Try again.")
+        .xalign(0.0)
+        .css_classes(["error"])
+        .visible(wrong)
+        .build();
+
+    let cancel = Button::with_label("Cancel");
+    let unlock = Button::builder()
+        .label("Unlock")
+        .css_classes(["suggested-action"])
+        .sensitive(false)
+        .build();
+    let buttons = GtkBox::new(Orientation::Horizontal, 8);
+    buttons.set_halign(Align::End);
+    buttons.set_margin_top(6);
+    buttons.append(&cancel);
+    buttons.append(&unlock);
+
+    content.append(&heading);
+    content.append(&detail);
+    content.append(&entry);
+    content.append(&problem);
+    content.append(&buttons);
+    dialog.set_child(Some(&content));
+    dialog.set_default_widget(Some(&unlock));
+
+    // The answer is given once: by Unlock, or by any way of closing the
+    // dialog, which counts as Cancel.
+    type Answer = Box<dyn FnOnce(Option<String>)>;
+    let done: Rc<RefCell<Option<Answer>>> = Rc::new(RefCell::new(Some(Box::new(done))));
+    let answer = {
+        let done = done.clone();
+        let dialog = dialog.clone();
+        move |password: Option<String>| {
+            let callback = done.borrow_mut().take();
+            dialog.close();
+            if let Some(callback) = callback {
+                callback(password);
+            }
+        }
+    };
+    let answer = Rc::new(answer);
+
+    entry.connect_changed(clone!(
+        #[weak]
+        unlock,
+        #[weak]
+        problem,
+        move |entry| {
+            unlock.set_sensitive(!entry.text().is_empty());
+            problem.set_visible(false);
+        }
+    ));
+    unlock.connect_clicked(clone!(
+        #[weak]
+        entry,
+        #[strong]
+        answer,
+        move |_| {
+            if !entry.text().is_empty() {
+                answer(Some(entry.text().to_string()));
+            }
+        }
+    ));
+    cancel.connect_clicked(clone!(
+        #[strong]
+        answer,
+        move |_| answer(None)
+    ));
+    dialog.connect_close_request(clone!(
+        #[strong]
+        done,
+        move |_| {
+            if let Some(callback) = done.borrow_mut().take() {
+                callback(None);
+            }
+            glib::Propagation::Proceed
+        }
+    ));
+
+    let escape = gtk4::EventControllerKey::new();
+    escape.connect_key_pressed(clone!(
+        #[strong]
+        answer,
+        move |_, key, _, _| {
+            if key == gdk::Key::Escape {
+                answer(None);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        }
+    ));
+    dialog.add_controller(escape);
+
+    dialog.present();
+    entry.grab_focus();
+}
+
 /// A heading and an explanation for a failure, in words a user can act on.
 fn explain(task: Task, error: &PdfError) -> (String, String) {
     let heading = match task {
@@ -1396,15 +1640,19 @@ fn explain(task: Task, error: &PdfError) -> (String, String) {
     }
     .to_string();
 
-    let name = |path: &Path| {
-        path.file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string())
-    };
+    let name = file_name;
 
     let detail = match error {
         PdfError::Encrypted(path) => format!(
-            "“{}” is password protected. Foolscap cannot open protected PDFs yet.",
+            "“{}” is password protected. Open it again and enter its password.",
+            name(path)
+        ),
+        PdfError::WrongPassword(path) => {
+            format!("The password given for “{}” is not correct.", name(path))
+        }
+        PdfError::UnsupportedEncryption { path, .. } => format!(
+            "“{}” is protected in a way Foolscap cannot read, such as with a certificate \
+             rather than a password.",
             name(path)
         ),
         PdfError::NotFound(path) => format!(
@@ -1616,6 +1864,16 @@ mod tests {
         );
         assert_eq!(heading, "Could not open the document");
         assert!(detail.contains("“secret.pdf” is password protected"));
+        assert!(!detail.contains("cannot open"));
+    }
+
+    #[test]
+    fn a_wrong_password_names_the_file() {
+        let (_, detail) = explain(
+            Task::Merge,
+            &PdfError::WrongPassword(PathBuf::from("/home/me/secret.pdf")),
+        );
+        assert!(detail.contains("“secret.pdf” is not correct"));
     }
 
     #[test]

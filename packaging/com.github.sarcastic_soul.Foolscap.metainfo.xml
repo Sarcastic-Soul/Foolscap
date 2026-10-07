@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Software-centre listing for Foolscap. GNOME Software, KDE Discover and
+  Flathub read this file; the id and the launchable must both match the
+  application id the GUI registers, or the listing and the running window are
+  treated as two different programs.
+
+  Add a <release> entry here for every tagged version.
+-->
+<component type="desktop-application">
+  <id>com.github.sarcastic_soul.Foolscap</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+
+  <name>Foolscap</name>
+  <summary>Merge, split, compress and add searchable text to PDFs</summary>
+  <developer id="com.github.sarcastic_soul">
+    <name>Anish Kumar</name>
+  </developer>
+
+  <description>
+    <p>
+      Foolscap is a PDF toolkit for Linux, with a desktop application and a
+      command-line tool that share one library.
+    </p>
+    <ul>
+      <li>Merge documents, and split, rotate, reorder or delete pages</li>
+      <li>Shrink documents by resampling the images inside them</li>
+      <li>Turn pages into images, and images into a document</li>
+      <li>Convert to and from office formats when LibreOffice is installed</li>
+      <li>Add a searchable text layer to scans when Tesseract is installed</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.github.sarcastic_soul.Foolscap.desktop</launchable>
+  <provides>
+    <binary>foolscap</binary>
+    <binary>foolscap-gui</binary>
+  </provides>
+
+  <categories>
+    <category>Office</category>
+    <category>Viewer</category>
+  </categories>
+  <keywords>
+    <keyword>PDF</keyword>
+    <keyword>merge</keyword>
+    <keyword>split</keyword>
+    <keyword>compress</keyword>
+    <keyword>OCR</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/Sarcastic-Soul/Foolscap</url>
+  <url type="bugtracker">https://github.com/Sarcastic-Soul/Foolscap/issues</url>
+  <url type="vcs-browser">https://github.com/Sarcastic-Soul/Foolscap</url>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-07">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

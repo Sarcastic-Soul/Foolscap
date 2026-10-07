@@ -1,5 +1,7 @@
 # Foolscap
 
+[![CI](https://github.com/Sarcastic-Soul/Foolscap/actions/workflows/ci.yml/badge.svg)](https://github.com/Sarcastic-Soul/Foolscap/actions/workflows/ci.yml)
+
 A Linux-first PDF toolkit: a Rust core library with a command-line tool and a
 GTK4 desktop application over it.
 
@@ -12,6 +14,47 @@ foolscap-gui report.pdf
 ```
 
 See [PLAN.md](PLAN.md) for how it was built and what is worth doing next.
+
+## Install
+
+Download a file from the
+[Releases page](https://github.com/Sarcastic-Soul/Foolscap/releases/latest).
+Each release has three; pick one.
+
+**Ubuntu 24.04 or newer, Debian 13 or newer** — the `.deb` package:
+
+```sh
+sudo apt install ./foolscap_0.1.0_amd64.deb
+```
+
+**Any distribution, with Flatpak** — the `Foolscap.flatpak` bundle:
+
+```sh
+flatpak install --user Foolscap.flatpak
+flatpak run com.github.sarcastic_soul.Foolscap                     # the desktop app
+flatpak run --command=foolscap com.github.sarcastic_soul.Foolscap  # the command-line tool
+```
+
+**Any distribution, without a package manager** — the tarball. It needs GTK 4.10
+or newer and glibc 2.39 or newer (Ubuntu 24.04, Fedora 40 and later are fine):
+
+```sh
+tar xzf foolscap-0.1.0-x86_64-linux.tar.gz
+cd foolscap-0.1.0-x86_64-linux
+./install.sh                 # into ~/.local; use sudo for /usr/local
+./install.sh --uninstall     # to remove it again
+```
+
+[LibreOffice](https://www.libreoffice.org/) and
+[Tesseract](https://github.com/tesseract-ocr/tesseract) are optional. Without
+them, Foolscap still merges, splits, rotates, compresses and renders; it just
+cannot convert office files or recognise text in scans. Install them from your
+distribution to turn those on (`sudo apt install libreoffice tesseract-ocr` on
+Ubuntu), and run `foolscap capabilities` to see what it can find. The Flatpak
+cannot reach either of them yet.
+
+`SHA256SUMS` on the same page lets you check a download:
+`sha256sum --check --ignore-missing SHA256SUMS`.
 
 ## Layout
 
@@ -90,10 +133,12 @@ Tesseract skip themselves when the tool is absent.
 ## Packaging
 
 ```sh
-./packaging/build-deb.sh
+./packaging/build-deb.sh        # target/debian/foolscap_<version>_amd64.deb
+./packaging/build-tarball.sh    # target/tarball/foolscap-<version>-x86_64-linux.tar.gz
 ```
 
-See [packaging/README.md](packaging/README.md) for the Flatpak.
+See [packaging/README.md](packaging/README.md) for the Flatpak and for how a
+release is made.
 
 ## License
 

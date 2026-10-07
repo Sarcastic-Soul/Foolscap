@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: check the tag matches Cargo.toml
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # A tag that disagrees with Cargo.toml would publish files whose names,
+      # package metadata and `--version` output all claim a different release.
+      - id: check
+        name: Compare versions
+        run: |
+          pkgid="$(cargo pkgid -p foolscap-cli)"
+          version="${pkgid##*[#@]}"
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "$tag" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version in Cargo.toml."
+            exit 1
+          fi
+          if ! grep -q "<release version=\"$version\"" packaging/com.github.sarcastic_soul.Foolscap.metainfo.xml; then
+            echo "::error::packaging/com.github.sarcastic_soul.Foolscap.metainfo.xml has no <release> entry for $version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  deb-and-tarball:
+    name: .deb and tarball
+    needs: version
+    # 24.04 is the oldest Ubuntu runner with GTK 4.10, which the GUI needs.
+    # The binaries then run on any system whose glibc and GTK4 are at least
+    # as new as these.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-4-dev clang libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+
+      - name: Build .deb
+        run: ./packaging/build-deb.sh
+
+      # Reuses the binaries the previous step built.
+      - name: Build tarball
+        run: ./packaging/build-tarball.sh
+
+      - name: Show package metadata
+        run: |
+          dpkg-deb -I target/debian/*.deb
+          dpkg-deb -c target/debian/*.deb
+
+      # Gathered into one directory so the artifact holds bare files rather
+      # than debian/ and tarball/ subdirectories.
+      - name: Collect outputs
+        run: |
+          mkdir upload
+          cp target/debian/*.deb target/tarball/*.tar.gz upload/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-and-tarball
+          path: upload/*
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak bundle
+    needs: version
+    runs-on: ubuntu-24.04
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
+      # flatpak-builder needs to create namespaces for its sandbox.
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: Foolscap.flatpak
+          manifest-path: packaging/flatpak/com.github.sarcastic_soul.Foolscap.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          artifact-name: flatpak
+
+  release:
+    name: publish the GitHub release
+    needs: [version, deb-and-tarball, flatpak]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: release
+        run: |
+          find . -type f -printf '%P\n' | sort
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Foolscap ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          # v0.2.0-rc1 and the like are marked as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            release/*.deb
+            release/*.tar.gz
+            release/*.flatpak
+            release/SHA256SUMS

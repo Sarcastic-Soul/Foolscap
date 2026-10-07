@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run's result irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Every optional feature on, as listed in CLAUDE.md.
+  FEATURES: foolscap-cli/full,pdf-core/render,pdf-core/convert,pdf-core/ocr
+
+jobs:
+  check:
+    name: fmt, clippy and tests (all features)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # clang and libclang-dev are for the MuPDF bindings, GTK4 for the GUI.
+      # Tesseract is installed so the OCR tests run rather than skip.
+      # LibreOffice is left out: it is a very large install, and the tests that
+      # need it skip themselves when it is missing.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-4-dev clang libclang-dev \
+            tesseract-ocr tesseract-ocr-eng
+
+      # Matches rust-toolchain.toml, which asks for stable with these two.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --workspace --features "$FEATURES" -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --features "$FEATURES"
+
+  minimal:
+    name: default features (no C dependencies)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The runner image already has clang, so a passing build alone would not
+      # notice MuPDF creeping into the default feature set. Look for it in the
+      # dependency tree as well.
+      - name: No MuPDF or bindgen without features
+        run: |
+          if cargo tree -p pdf-core -p foolscap-cli -e normal,build | grep -E 'mupdf|bindgen'; then
+            echo "::error::A default build now depends on MuPDF or bindgen."
+            exit 1
+          fi
+
+      - name: cargo test -p pdf-core
+        run: cargo test -p pdf-core
+
+      - name: cargo build -p foolscap-cli
+        run: cargo build -p foolscap-cli
+
+  packaging:
+    name: packaging files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            appstream desktop-file-utils
+
+      - name: Validate desktop entry and metainfo
+        run: |
+          desktop-file-validate packaging/com.github.sarcastic_soul.Foolscap.desktop
+          appstreamcli validate --no-net packaging/com.github.sarcastic_soul.Foolscap.metainfo.xml
+
+      # The Flatpak build has no network, so it can only use crates listed in
+      # cargo-sources.json. If Cargo.lock changed without regenerating it, the
+      # failure would otherwise not show up until the next release tag.
+      - name: cargo-sources.json matches Cargo.lock
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/flatpak-cargo-generator.py" \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/41c20aa10819cdb2a4f3ca171758a96d1955c018/cargo/flatpak-cargo-generator.py
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet aiohttp PyYAML tomlkit
+          "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP/flatpak-cargo-generator.py" Cargo.lock \
+            -o packaging/flatpak/cargo-sources.json
+          if ! git diff --exit-code --stat packaging/flatpak/cargo-sources.json; then
+            echo "::error::packaging/flatpak/cargo-sources.json is out of date. See packaging/README.md to regenerate it."
+            exit 1
+          fi

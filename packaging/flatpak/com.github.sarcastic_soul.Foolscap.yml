@@ -7,9 +7,13 @@
 #
 # Build with:
 #   flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47 \
-#       org.freedesktop.Sdk.Extension.rust-stable//24.08
+#       org.freedesktop.Sdk.Extension.rust-stable//24.08 \
+#       org.freedesktop.Sdk.Extension.llvm18//24.08
 #   flatpak-builder --user --install --force-clean build-dir \
 #       packaging/flatpak/com.github.sarcastic_soul.Foolscap.yml
+#
+# cargo-sources.json must be regenerated whenever Cargo.lock changes; see
+# packaging/README.md.
 
 app-id: com.github.sarcastic_soul.Foolscap
 runtime: org.gnome.Platform
@@ -17,7 +21,14 @@ runtime-version: '47'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  # bindgen needs libclang to generate the MuPDF bindings.
+  - org.freedesktop.Sdk.Extension.llvm18
 command: foolscap-gui
+
+# The source tree names the icon `foolscap` so the .deb can install it as is.
+# Flatpak only exports files named after the application id, so the icon is
+# renamed here and the desktop entry's Icon= line is rewritten to match.
+rename-icon: foolscap
 
 finish-args:
   # Documents are opened through the file chooser portal, so no blanket
@@ -30,9 +41,14 @@ finish-args:
   - --filesystem=xdg-download
 
 build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm18/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm18/lib
   env:
+    # The build has no network. cargo-sources.json unpacks every crate into
+    # cargo/vendor and writes a cargo/config that points crates.io there; that
+    # config is only found if CARGO_HOME is this exact directory.
     CARGO_HOME: /run/build/foolscap/cargo
+    LIBCLANG_PATH: /usr/lib/sdk/llvm18/lib
 
 modules:
   # LibreOffice and Tesseract are invoked as subprocesses. Inside a Flatpak
@@ -42,15 +58,25 @@ modules:
   - name: foolscap
     buildsystem: simple
     build-commands:
-      - cargo --offline fetch --manifest-path Cargo.toml
-      - cargo --offline build --release -p foolscap-cli --features render,convert,ocr
+      - cargo --offline build --release -p foolscap-cli --features full
       - cargo --offline build --release -p foolscap-gui
       - install -Dm755 target/release/foolscap /app/bin/foolscap
       - install -Dm755 target/release/foolscap-gui /app/bin/foolscap-gui
-      - install -Dm644 packaging/foolscap.desktop
+      - install -Dm644 packaging/com.github.sarcastic_soul.Foolscap.desktop
         /app/share/applications/com.github.sarcastic_soul.Foolscap.desktop
+      - install -Dm644 packaging/com.github.sarcastic_soul.Foolscap.metainfo.xml
+        /app/share/metainfo/com.github.sarcastic_soul.Foolscap.metainfo.xml
       - install -Dm644 packaging/foolscap.svg
-        /app/share/icons/hicolor/scalable/apps/com.github.sarcastic_soul.Foolscap.svg
+        /app/share/icons/hicolor/scalable/apps/foolscap.svg
     sources:
       - type: dir
         path: ../..
+        # A local checkout's build output runs to gigabytes and would be
+        # copied into the build directory on every run.
+        skip:
+          - target
+          - dist
+          - build-dir
+          - .flatpak-builder
+          - .claude
+      - cargo-sources.json

@@ -177,7 +177,8 @@ Work items:
 4. CLI subcommands, each one a `clap` struct that maps directly onto a core call.
 5. Encrypted-PDF detection. As built: `lopdf` *loads* an encrypted file happily
    and leaves its strings and streams as ciphertext, so `Document::open` checks
-   `is_encrypted()` after loading and returns `PdfError::Encrypted`.
+   `is_encrypted()` after loading and returns `PdfError::Encrypted`. (Since
+   superseded by password handling; see below.)
 
 Three things the implementation added that the plan had not anticipated:
 
@@ -382,7 +383,7 @@ saves correctly.
 
 ## Every stage is built
 
-All seven stages are implemented, with 217 tests passing and
+All seven stages are implemented, with 232 tests passing and
 `clippy -D warnings` clean across every feature combination.
 
 ### What the plan got wrong
@@ -398,7 +399,9 @@ Recorded because the corrections are more useful than the original guesses.
   resampled with the `image` crate alone, so `compress` works in a default
   build rather than requiring `render`.
 - **`lopdf` loads encrypted PDFs quite happily** and hands back ciphertext, so
-  the check has to happen after loading rather than instead of it.
+  the check has to happen after loading rather than instead of it. From 0.44
+  it decrypts what it can and returns a near-empty document for what it
+  cannot, still with `/Encrypt` in the trailer; the check is now on that.
 - **LibreOffice cannot convert a PDF to plain text.** Its Writer PDF import puts
   text in frames that the plain-text exporter ignores, producing an empty file.
   Text extraction goes through MuPDF instead, and `txt` is not offered as a
@@ -417,14 +420,50 @@ Recorded because the corrections are more useful than the original guesses.
 - **`split_plan` and `convert::plan`**, so the CLI can refuse to overwrite
   before it has already done so.
 
+## Password handling — **done**
+
+The first item from the list below, built after the seven stages.
+
+- **Library.** `Document` and `PageRenderer` both have `open`,
+  `open_with_password` and `open_with(path, Option<&str>)`. Plain `open` still
+  reads any file whose user password is empty, which is most encrypted PDFs in
+  the wild. Errors: `Encrypted` means a password is needed and none was given,
+  `WrongPassword` means one was given and did not fit, and
+  `UnsupportedEncryption` covers security handlers `lopdf` cannot read.
+  `Document::was_encrypted` reports whether a file arrived encrypted.
+- **How the password reaches an operation.** Operations that already take an
+  options struct (`OcrOptions`, `PdfToImagesOptions`) gained a
+  `password: Option<String>` field. The rest take `password: Option<&str>` on
+  their full form: `merge_with_progress`, `split_with_progress`, `split_plan`
+  and `pdf_to_office`. The short forms (`merge`, `split`) take none. Inputs
+  share one password, which files that do not need it ignore — merging a
+  protected file with a plain one just works.
+- **Output is never encrypted.** A decrypted document loses `/Encrypt`, so every
+  save writes a plain file. That includes owner-restricted files that opened
+  without a password: editing one removes its restrictions. Re-encrypting on
+  save would be a separate feature.
+- **`to-office`.** LibreOffice cannot be given a password headlessly, so an
+  encrypted input is decrypted into a private (0700) scratch directory first and
+  that copy is converted.
+- **CLI.** A global `--password`, also read from `FOOLSCAP_PASSWORD` so it can
+  stay out of shell history, and a `decrypt` subcommand that refuses a file
+  which is not encrypted. `info` reports whether a file was encrypted.
+- **Dependency.** `lopdf` went from 0.34 to 0.44 for password authentication and
+  AES-256 support, with default features off. Its name accessors now return
+  byte strings, which touched `assemble`, `compress`, `placement` and the OCR
+  overlay.
+- **Tests.** Fixtures are encrypted with RC4-128, AES-128 and AES-256 by
+  `lopdf`, and Poppler's `pdftotext` checks that they really are encrypted and
+  that the decrypted output reads. Poppler misreads an AES-256 dictionary with
+  no `/Length`, which `lopdf` omits, so the fixtures add it.
+
 ## Where to go next
 
 Nothing in the original plan is outstanding. The obvious next pieces, in rough
 order of value:
 
-1. **Password handling.** Encrypted documents are refused by name; accepting a
-   password and calling `lopdf`'s `decrypt` would open a common category of
-   file that currently cannot be touched at all.
+1. ~~**Password handling.**~~ Done; see above. Writing encrypted output is the
+   remaining half.
 2. **Predictor support in `compress`** — **done**. Flate images with a PNG
    predictor (`/Predictor` 10 to 15, all five row filters) or the TIFF
    predictor (`/Predictor 2`) are now un-filtered and go through the same

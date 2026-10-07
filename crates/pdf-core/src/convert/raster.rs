@@ -34,6 +34,8 @@ pub struct PdfToImagesOptions {
     pub format: ImageFormat,
     /// JPEG quality, ignored for PNG.
     pub quality: u8,
+    /// Password for an encrypted input, used only if the file needs one.
+    pub password: Option<String>,
 }
 
 impl Default for PdfToImagesOptions {
@@ -43,6 +45,7 @@ impl Default for PdfToImagesOptions {
             dpi: 150.0,
             format: ImageFormat::Png,
             quality: 85,
+            password: None,
         }
     }
 }
@@ -51,7 +54,7 @@ impl Default for PdfToImagesOptions {
 ///
 /// The CLI needs these in advance to ask before overwriting.
 pub fn plan(input: &Path, out_dir: &Path, options: &PdfToImagesOptions) -> Result<Vec<PathBuf>> {
-    let renderer = PageRenderer::open(input)?;
+    let renderer = PageRenderer::open_with(input, options.password.as_deref())?;
     let selected = options.pages.resolve(renderer.page_count())?;
     Ok(output_paths(
         input,
@@ -85,7 +88,7 @@ pub fn pdf_to_images_with_progress(
         });
     }
 
-    let renderer = PageRenderer::open(input)?;
+    let renderer = PageRenderer::open_with(input, options.password.as_deref())?;
     let selected = options.pages.resolve(renderer.page_count())?;
 
     if selected.is_empty() {

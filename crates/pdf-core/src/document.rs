@@ -46,40 +46,109 @@ impl Metadata {
 ///
 /// Wraps [`lopdf::Document`] rather than exposing it, so that the backing
 /// library stays an implementation detail.
+///
+/// An encrypted file is decrypted as it is opened, so a `Document` always
+/// holds plain content, and saving it writes an unencrypted file.
 pub struct Document {
     pub(crate) inner: lopdf::Document,
     pub(crate) source: Option<PathBuf>,
+    pub(crate) was_encrypted: bool,
 }
 
 impl Document {
     /// Open a PDF from disk.
     ///
-    /// Encrypted documents are rejected with [`PdfError::Encrypted`] rather
-    /// than surfacing later as confusing parse failures: `lopdf` loads the
-    /// object structure of an encrypted file successfully, but every string and
-    /// stream in it is ciphertext until a password is supplied.
+    /// Many encrypted files have an empty user password: they restrict what
+    /// may be done with them but open in every viewer without asking. Those
+    /// open here too. A file that really needs a password is rejected with
+    /// [`PdfError::Encrypted`]; use [`Document::open_with_password`] for it.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with(path, None)
+    }
+
+    /// Open an encrypted PDF with its user or owner password.
+    ///
+    /// A wrong password is [`PdfError::WrongPassword`]. The password is not
+    /// needed, and not checked, for a file that opens without one, so it is
+    /// safe to pass the same password for every file in a batch.
+    pub fn open_with_password(path: impl AsRef<Path>, password: &str) -> Result<Self> {
+        Self::open_with(path, Some(password))
+    }
+
+    /// Open a PDF, using `password` only if the file needs one.
+    ///
+    /// The form to call when a password may or may not have been given, such
+    /// as from a command-line option.
+    pub fn open_with(path: impl AsRef<Path>, password: Option<&str>) -> Result<Self> {
         let path = path.as_ref();
 
         if !path.exists() {
             return Err(PdfError::NotFound(path.to_path_buf()));
         }
 
-        let inner = lopdf::Document::load(path).map_err(|source| map_load_error(path, source))?;
+        let bytes = std::fs::read(path).map_err(|source| PdfError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
-        if inner.is_encrypted() {
-            return Err(PdfError::Encrypted(path.to_path_buf()));
+        // Loading already tries the empty password, and decrypts the document
+        // in place when that works.
+        let mut inner =
+            lopdf::Document::load_mem(&bytes).map_err(|source| map_load_error(path, source))?;
+
+        // When the empty password does not work, lopdf still returns a
+        // document: one holding the encryption dictionary and none of the
+        // content. The trailer entry is the dependable sign that nothing was
+        // decrypted.
+        if is_locked(&inner) {
+            let Some(password) = password else {
+                return Err(PdfError::Encrypted(path.to_path_buf()));
+            };
+
+            // Check the password against the dictionary already in hand before
+            // parsing the file a second time. This also separates a wrong
+            // password from a scheme that cannot be read at all, which the
+            // loader reports identically.
+            inner
+                .authenticate_password(password)
+                .map_err(|source| map_password_error(path, source))?;
+
+            let options = lopdf::LoadOptions::with_password(password);
+            inner = lopdf::Document::load_mem_with_options(&bytes, options)
+                .map_err(|source| map_load_error(path, source))?;
+
+            if is_locked(&inner) {
+                return Err(PdfError::WrongPassword(path.to_path_buf()));
+            }
         }
+
+        // lopdf remembers how the file was encrypted so that an incremental
+        // update can be encrypted to match. Foolscap always writes whole files,
+        // and they are meant to come out decrypted, so forget it.
+        let was_encrypted = inner.encryption_state.take().is_some();
 
         Ok(Self {
             inner,
             source: Some(path.to_path_buf()),
+            was_encrypted,
         })
     }
 
     /// Wrap an already-built `lopdf` document.
     pub(crate) fn from_lopdf(inner: lopdf::Document, source: Option<PathBuf>) -> Self {
-        Self { inner, source }
+        Self {
+            inner,
+            source,
+            was_encrypted: false,
+        }
+    }
+
+    /// Whether the file this was opened from was encrypted.
+    ///
+    /// The document itself is decrypted either way; this says whether saving
+    /// it removes protection the original had.
+    pub fn was_encrypted(&self) -> bool {
+        self.was_encrypted
     }
 
     /// Write the document to `path`.
@@ -203,6 +272,12 @@ impl Document {
     }
 }
 
+/// Whether lopdf left the document encrypted, having found no password that
+/// opens it.
+fn is_locked(doc: &lopdf::Document) -> bool {
+    doc.trailer.get(b"Encrypt").is_ok()
+}
+
 /// Translate a load failure into something a user can act on.
 fn map_load_error(path: &Path, source: lopdf::Error) -> PdfError {
     match source {
@@ -210,8 +285,35 @@ fn map_load_error(path: &Path, source: lopdf::Error) -> PdfError {
             path: path.to_path_buf(),
             source,
         },
-        lopdf::Error::Decryption(_) => PdfError::Encrypted(path.to_path_buf()),
+        lopdf::Error::InvalidPassword
+        | lopdf::Error::Decryption(_)
+        | lopdf::Error::UnsupportedSecurityHandler(_) => map_password_error(path, source),
         other => PdfError::Malformed {
+            path: path.to_path_buf(),
+            reason: other.to_string(),
+        },
+    }
+}
+
+/// Translate a failure to unlock a document. Only an incorrect password is
+/// something the user can fix by typing something else; anything else is a
+/// scheme that cannot be read.
+fn map_password_error(path: &Path, source: lopdf::Error) -> PdfError {
+    use lopdf::encryption::DecryptionError;
+
+    match source {
+        lopdf::Error::InvalidPassword
+        | lopdf::Error::Decryption(DecryptionError::IncorrectPassword) => {
+            PdfError::WrongPassword(path.to_path_buf())
+        }
+        lopdf::Error::UnsupportedSecurityHandler(name) => PdfError::UnsupportedEncryption {
+            path: path.to_path_buf(),
+            reason: format!(
+                "the {} security handler is not supported",
+                String::from_utf8_lossy(&name)
+            ),
+        },
+        other => PdfError::UnsupportedEncryption {
             path: path.to_path_buf(),
             reason: other.to_string(),
         },

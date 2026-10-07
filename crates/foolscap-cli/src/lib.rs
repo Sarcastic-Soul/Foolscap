@@ -10,7 +10,8 @@ pub mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{arrange, compress, info, merge, meta, optimize, rotate, split};
+use commands::{arrange, compress, decrypt, info, merge, meta, optimize, rotate, split};
+use pdf_core::PdfError;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -27,6 +28,17 @@ pub struct Cli {
     /// Overwrite output files that already exist.
     #[arg(short, long, global = true)]
     force: bool,
+
+    /// Password for encrypted input documents. Only used for files that need
+    /// one; files with an empty user password open without it.
+    #[arg(
+        long,
+        global = true,
+        env = "FOOLSCAP_PASSWORD",
+        hide_env_values = true,
+        value_name = "PASSWORD"
+    )]
+    password: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -48,6 +60,8 @@ pub enum Command {
     Info(info::Args),
     /// Read or edit the document information dictionary.
     Meta(meta::Args),
+    /// Write an unencrypted copy of a password-protected document.
+    Decrypt(decrypt::Args),
     /// Losslessly shrink a document.
     Optimize(optimize::Args),
     /// Shrink a document by resampling its images. Lossy.
@@ -84,43 +98,65 @@ pub fn run(cli: Cli) -> Result<()> {
     init_tracing(cli.verbose);
 
     let force = cli.force;
+    let password = cli.password.as_deref();
 
-    match cli.command {
-        Command::Merge(args) => merge::run(args, force),
-        Command::Split(args) => split::run(args, force),
-        Command::Rotate(args) => rotate::run(args, force),
-        Command::Delete(args) => arrange::delete(args, force),
-        Command::Reorder(args) => arrange::reorder(args, force),
-        Command::Info(args) => info::run(args),
-        Command::Meta(args) => meta::run(args, force),
-        Command::Optimize(args) => optimize::run(args, force),
-        Command::Compress(args) => compress::run(args, force),
+    let outcome = match cli.command {
+        Command::Merge(args) => merge::run(args, force, password),
+        Command::Split(args) => split::run(args, force, password),
+        Command::Rotate(args) => rotate::run(args, force, password),
+        Command::Delete(args) => arrange::delete(args, force, password),
+        Command::Reorder(args) => arrange::reorder(args, force, password),
+        Command::Info(args) => info::run(args, password),
+        Command::Meta(args) => meta::run(args, force, password),
+        Command::Decrypt(args) => decrypt::run(args, force, password),
+        Command::Optimize(args) => optimize::run(args, force, password),
+        Command::Compress(args) => compress::run(args, force, password),
         #[cfg(feature = "render")]
-        Command::Render(args) => commands::render::render(args, force),
+        Command::Render(args) => commands::render::render(args, force, password),
         #[cfg(feature = "render")]
-        Command::Thumbnail(args) => commands::render::thumbnail(args, force),
+        Command::Thumbnail(args) => commands::render::thumbnail(args, force, password),
         #[cfg(feature = "convert")]
         Command::FromImages(args) => commands::convert::from_images(args, force),
         #[cfg(all(feature = "convert", feature = "render"))]
-        Command::ToImages(args) => commands::to_images::run(args, force),
+        Command::ToImages(args) => commands::to_images::run(args, force, password),
         #[cfg(feature = "convert")]
         Command::FromOffice(args) => commands::convert::from_office(args, force),
         #[cfg(feature = "convert")]
-        Command::ToOffice(args) => commands::convert::to_office(args, force),
+        Command::ToOffice(args) => commands::convert::to_office(args, force, password),
         #[cfg(feature = "ocr")]
-        Command::Ocr(args) => commands::ocr::run(args, force),
+        Command::Ocr(args) => commands::ocr::run(args, force, password),
         #[cfg(feature = "ocr")]
-        Command::ExtractText(args) => commands::ocr::extract_text(args, force),
+        Command::ExtractText(args) => commands::ocr::extract_text(args, force, password),
         Command::Capabilities => {
             output::print_capabilities();
             Ok(())
         }
+    };
+
+    outcome.map_err(explain)
+}
+
+/// Add the command-line remedy to errors that have one. `pdf-core` cannot name
+/// a flag: the GUI asks for a password in a dialog instead.
+fn explain(error: anyhow::Error) -> anyhow::Error {
+    match error.downcast_ref::<PdfError>() {
+        Some(PdfError::Encrypted(path)) => anyhow::anyhow!(
+            "{} is encrypted; pass --password (or set FOOLSCAP_PASSWORD)",
+            path.display()
+        ),
+        Some(PdfError::WrongPassword(path)) => {
+            anyhow::anyhow!("wrong password for {}", path.display())
+        }
+        _ => error,
     }
 }
 
 fn init_tracing(verbosity: u8) {
     let level = match verbosity {
-        0 => "warn",
+        // lopdf warns on every encrypted file it loads, before pdf-core has
+        // tried the password, and pdf-core reports the outcome as a typed
+        // error anyway. Its warnings come back with -v.
+        0 => "warn,lopdf=error",
         1 => "info",
         2 => "debug",
         _ => "trace",

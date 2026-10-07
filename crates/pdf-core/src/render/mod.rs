@@ -103,25 +103,53 @@ impl PageRenderer {
     pub const DEFAULT_CACHE_CAPACITY: usize = 32;
 
     /// Open a document for rendering.
+    ///
+    /// As with [`Document::open`](crate::Document::open), an encrypted file
+    /// with an empty user password opens without asking; one that needs a
+    /// password is [`PdfError::Encrypted`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_capacity(path, Self::DEFAULT_CACHE_CAPACITY)
+        Self::open_with(path, None)
+    }
+
+    /// Open an encrypted document with its user or owner password.
+    pub fn open_with_password(path: impl AsRef<Path>, password: &str) -> Result<Self> {
+        Self::open_with(path, Some(password))
+    }
+
+    /// Open a document, using `password` only if the file needs one.
+    pub fn open_with(path: impl AsRef<Path>, password: Option<&str>) -> Result<Self> {
+        Self::open_inner(path.as_ref(), password, Self::DEFAULT_CACHE_CAPACITY)
     }
 
     /// Open a document, choosing how many rendered pages to retain.
     pub fn open_with_capacity(path: impl AsRef<Path>, capacity: usize) -> Result<Self> {
-        let path = path.as_ref();
+        Self::open_inner(path.as_ref(), None, capacity)
+    }
 
+    fn open_inner(path: &Path, password: Option<&str>, capacity: usize) -> Result<Self> {
         if !path.exists() {
             return Err(PdfError::NotFound(path.to_path_buf()));
         }
 
-        let inner = mupdf::Document::open(path).map_err(|source| render_error(path, source))?;
+        // MuPDF tries the empty password itself while opening, so a document
+        // that still needs one here really does.
+        let mut inner = mupdf::Document::open(path).map_err(|source| render_error(path, source))?;
 
         if inner
             .needs_password()
             .map_err(|source| render_error(path, source))?
         {
-            return Err(PdfError::Encrypted(path.to_path_buf()));
+            let Some(password) = password else {
+                return Err(PdfError::Encrypted(path.to_path_buf()));
+            };
+
+            let accepted = inner
+                .authenticate(password)
+                .map_err(|source| render_error(path, source))?;
+
+            if !accepted {
+                return Err(PdfError::WrongPassword(path.to_path_buf()));
+            }
         }
 
         let page_count = inner

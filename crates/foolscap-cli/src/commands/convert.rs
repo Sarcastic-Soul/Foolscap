@@ -143,7 +143,7 @@ pub fn from_office(args: FromOfficeArgs, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn to_office(args: ToOfficeArgs, force: bool) -> Result<()> {
+pub fn to_office(args: ToOfficeArgs, force: bool, password: Option<&str>) -> Result<()> {
     guard_output(&args.output, force)?;
 
     // Worth saying every time, not just in the documentation: a PDF records
@@ -153,7 +153,7 @@ pub fn to_office(args: ToOfficeArgs, force: bool) -> Result<()> {
     eprintln!("         expect layout, fonts and structure to differ from the original.");
 
     let scratch = scratch_beside(&args.output)?;
-    let produced = pdf_to_office(&args.input, args.format.into(), scratch.path())?;
+    let produced = pdf_to_office(&args.input, args.format.into(), scratch.path(), password)?;
     std::fs::rename(&produced, &args.output)
         .or_else(|_| std::fs::copy(&produced, &args.output).map(|_| ()))?;
 

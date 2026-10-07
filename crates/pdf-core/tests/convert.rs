@@ -210,7 +210,7 @@ fn a_pdf_becomes_an_editable_document() {
     let workspace = Workspace::new();
     let input = workspace.document("in.pdf", 1, "Page");
 
-    let produced = pdf_to_office(&input, OfficeFormat::Docx, workspace.path()).unwrap();
+    let produced = pdf_to_office(&input, OfficeFormat::Docx, workspace.path(), None).unwrap();
 
     assert!(produced.exists());
     assert_eq!(produced.extension().unwrap(), "docx");

@@ -148,12 +148,8 @@ fn a_stencil_mask_is_left_alone() {
         .iter()
         .find(|(_, object)| match object {
             lopdf::Object::Stream(stream) => {
-                stream
-                    .dict
-                    .get(b"Subtype")
-                    .and_then(|s| s.as_name_str())
-                    .ok()
-                    == Some("Image")
+                stream.dict.get(b"Subtype").and_then(|s| s.as_name()).ok()
+                    == Some(b"Image".as_slice())
             }
             _ => false,
         })
@@ -220,12 +216,8 @@ fn the_replacement_image_is_still_a_valid_jpeg() {
         .values()
         .find_map(|object| match object {
             lopdf::Object::Stream(stream)
-                if stream
-                    .dict
-                    .get(b"Subtype")
-                    .and_then(|s| s.as_name_str())
-                    .ok()
-                    == Some("Image") =>
+                if stream.dict.get(b"Subtype").and_then(|s| s.as_name()).ok()
+                    == Some(b"Image".as_slice()) =>
             {
                 Some(stream)
             }
@@ -234,8 +226,8 @@ fn the_replacement_image_is_still_a_valid_jpeg() {
         .expect("the image should still be there");
 
     assert_eq!(
-        stream.dict.get(b"Filter").unwrap().as_name_str().unwrap(),
-        "DCTDecode"
+        stream.dict.get(b"Filter").unwrap().as_name().unwrap(),
+        b"DCTDecode"
     );
 
     let decoded =
@@ -321,12 +313,8 @@ fn only_image(path: &std::path::Path) -> lopdf::Stream {
         .into_values()
         .filter_map(|object| match object {
             lopdf::Object::Stream(stream)
-                if stream
-                    .dict
-                    .get(b"Subtype")
-                    .and_then(|s| s.as_name_str())
-                    .ok()
-                    == Some("Image") =>
+                if stream.dict.get(b"Subtype").and_then(|s| s.as_name()).ok()
+                    == Some(b"Image".as_slice()) =>
             {
                 Some(stream)
             }
@@ -378,8 +366,8 @@ fn check_predicted_image_is_recompressed(predictor: Predictor) {
     // 720 dpi down to 72 is a tenth, so roughly 100 pixels across.
     let stream = only_image(&out);
     assert_eq!(
-        stream.dict.get(b"Filter").unwrap().as_name_str().unwrap(),
-        "DCTDecode"
+        stream.dict.get(b"Filter").unwrap().as_name().unwrap(),
+        b"DCTDecode"
     );
     assert!(stream.dict.get(b"DecodeParms").is_err());
 

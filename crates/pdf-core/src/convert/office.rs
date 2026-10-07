@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::document::Document;
 use crate::error::{PdfError, Result};
 use crate::subprocess::LIBREOFFICE;
 
@@ -56,16 +57,57 @@ pub fn office_to_pdf(input: &Path, out_dir: &Path) -> Result<PathBuf> {
 /// Convert a PDF into an office format.
 ///
 /// Lossy by nature: callers should tell the user so.
-pub fn pdf_to_office(input: &Path, format: OfficeFormat, out_dir: &Path) -> Result<PathBuf> {
+///
+/// `password` is used only if `input` needs one. LibreOffice cannot be handed
+/// a password headlessly, so an encrypted input is decrypted into a private
+/// scratch directory first and LibreOffice converts that copy.
+pub fn pdf_to_office(
+    input: &Path,
+    format: OfficeFormat,
+    out_dir: &Path,
+    password: Option<&str>,
+) -> Result<PathBuf> {
     tracing::warn!(
         format = format.as_str(),
         "PDF to office conversion is approximate; layout and structure will differ"
     );
+
+    // Opening it here also turns a missing password into a clear error,
+    // rather than a LibreOffice run that quietly produces nothing.
+    let mut doc = match Document::open_with(input, password) {
+        Ok(doc) => Some(doc),
+        Err(
+            error @ (PdfError::NotFound(_)
+            | PdfError::Encrypted(_)
+            | PdfError::WrongPassword(_)
+            | PdfError::UnsupportedEncryption { .. }),
+        ) => return Err(error),
+        // LibreOffice has its own PDF reader and may cope with a file this
+        // one cannot; let it try.
+        Err(error) => {
+            tracing::debug!(%error, "handing an unreadable PDF to LibreOffice as is");
+            None
+        }
+    };
+
+    // Kept alive until the conversion is done; dropping it removes the copy.
+    let staging = match doc.as_mut().filter(|doc| doc.was_encrypted()) {
+        Some(doc) => {
+            let dir = ProfileDir::new()?;
+            let name = input.file_name().unwrap_or("input.pdf".as_ref());
+            let copy = dir.path.join(name);
+            doc.save(&copy)?;
+            Some((dir, copy))
+        }
+        None => None,
+    };
+    let source = staging.as_ref().map_or(input, |(_, copy)| copy.as_path());
+
     // Without an explicit input filter, LibreOffice opens a PDF in Draw, which
     // cannot export any of these formats — it exits zero having written
     // nothing. Naming the Writer PDF importer is what makes the conversion
     // possible at all.
-    convert(input, format.as_str(), out_dir, Some("writer_pdf_import"))
+    convert(source, format.as_str(), out_dir, Some("writer_pdf_import"))
 }
 
 fn convert(
@@ -163,6 +205,19 @@ impl ProfileDir {
             path: path.clone(),
             source,
         })?;
+
+        // Private to this user: besides the profile, this can hold a
+        // decrypted copy of a password-protected document.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).map_err(
+                |source| PdfError::Io {
+                    path: path.clone(),
+                    source,
+                },
+            )?;
+        }
 
         Ok(Self { path })
     }

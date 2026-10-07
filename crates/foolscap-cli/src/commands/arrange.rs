@@ -34,10 +34,10 @@ pub struct ReorderArgs {
     output: PathBuf,
 }
 
-pub fn delete(args: DeleteArgs, force: bool) -> Result<()> {
+pub fn delete(args: DeleteArgs, force: bool, password: Option<&str>) -> Result<()> {
     guard_output(&args.output, force)?;
 
-    let doc = Document::open(&args.input)?;
+    let doc = Document::open_with(&args.input, password)?;
     let before = doc.page_count();
 
     let mut trimmed = pdf_core::delete(doc, &PageRange::parse(&args.pages)?)?;
@@ -49,10 +49,10 @@ pub fn delete(args: DeleteArgs, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn reorder(args: ReorderArgs, force: bool) -> Result<()> {
+pub fn reorder(args: ReorderArgs, force: bool, password: Option<&str>) -> Result<()> {
     guard_output(&args.output, force)?;
 
-    let doc = Document::open(&args.input)?;
+    let doc = Document::open_with(&args.input, password)?;
     let order = PageRange::parse(&args.order)?.resolve(doc.page_count())?;
 
     let mut arranged = pdf_core::arrange(doc, &order)?;

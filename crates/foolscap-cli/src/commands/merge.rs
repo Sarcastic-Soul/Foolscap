@@ -16,7 +16,7 @@ pub struct Args {
     output: PathBuf,
 }
 
-pub fn run(args: Args, force: bool) -> Result<()> {
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     if args.inputs.len() < 2 {
         bail!("merge needs at least two input documents");
     }
@@ -27,7 +27,7 @@ pub fn run(args: Args, force: bool) -> Result<()> {
         tracing::info!("{}", progress.message);
     };
 
-    pdf_core::merge_with_progress(&args.inputs, &args.output, Some(&mut report))?;
+    pdf_core::merge_with_progress(&args.inputs, &args.output, password, Some(&mut report))?;
 
     let merged = pdf_core::Document::open(&args.output)?;
     println!(

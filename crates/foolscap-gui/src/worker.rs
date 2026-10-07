@@ -321,7 +321,7 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
 
                     let scratch = Temporary::beside(&output);
                     let mut tick = tick;
-                    pdf_core::merge_with_progress(&inputs, scratch.path(), Some(&mut tick))?;
+                    pdf_core::merge_with_progress(&inputs, scratch.path(), None, Some(&mut tick))?;
                     scratch.persist(&output)?;
 
                     PageRenderer::open(&output)

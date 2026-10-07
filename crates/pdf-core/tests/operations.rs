@@ -570,7 +570,7 @@ fn the_plan_matches_what_split_actually_writes() {
         SplitSpec::Every(2),
         SplitSpec::Extract(range("1-3")),
     ] {
-        let planned = pdf_core::split_plan(&input, &spec, workspace.path()).unwrap();
+        let planned = pdf_core::split_plan(&input, &spec, workspace.path(), None).unwrap();
         let written = pdf_core::split(&input, &spec, workspace.path()).unwrap();
         assert_eq!(planned, written, "plan disagreed with reality for {spec:?}");
     }

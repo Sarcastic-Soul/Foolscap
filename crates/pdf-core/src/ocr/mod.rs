@@ -36,6 +36,9 @@ pub struct OcrOptions {
     /// a born-digital page has perfect text already, and recognising it again
     /// can only make it worse.
     pub skip_pages_with_text: bool,
+    /// Password for an encrypted input, used only if the file needs one. The
+    /// output is written unencrypted.
+    pub password: Option<String>,
 }
 
 impl Default for OcrOptions {
@@ -44,6 +47,7 @@ impl Default for OcrOptions {
             language: "eng".to_string(),
             dpi: DEFAULT_DPI,
             skip_pages_with_text: true,
+            password: None,
         }
     }
 }
@@ -99,8 +103,8 @@ pub fn ocr_with_progress(
 
     check_language(&options.language)?;
 
-    let renderer = PageRenderer::open(input)?;
-    let mut doc = Document::open(input)?;
+    let renderer = PageRenderer::open_with(input, options.password.as_deref())?;
+    let mut doc = Document::open_with(input, options.password.as_deref())?;
 
     let page_ids: Vec<lopdf::ObjectId> = doc.inner.get_pages().into_values().collect();
     let total = page_ids.len();

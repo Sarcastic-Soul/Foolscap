@@ -39,9 +39,7 @@ pub(crate) fn graft_text_layer(
         ));
     };
 
-    let content = source
-        .get_page_content(source_page)
-        .map_err(|source| PdfError::Internal(format!("could not read the text layer: {source}")))?;
+    let content = source.get_page_content(source_page);
     let decoded = Content::decode(&content).map_err(|source| {
         PdfError::Internal(format!("could not decode the text layer: {source}"))
     })?;

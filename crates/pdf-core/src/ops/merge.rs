@@ -9,13 +9,18 @@ use crate::progress::{Progress, ProgressFn};
 ///
 /// The result has exactly the sum of the inputs' page counts.
 pub fn merge(inputs: &[PathBuf], output: &Path) -> Result<()> {
-    merge_with_progress(inputs, output, None)
+    merge_with_progress(inputs, output, None, None)
 }
 
 /// [`merge`], reporting one progress tick per input document read.
+///
+/// `password` is offered to every input that needs one and ignored by those
+/// that do not, so a batch mixing plain and protected files under one password
+/// works. Encrypted inputs come out decrypted in the result.
 pub fn merge_with_progress(
     inputs: &[PathBuf],
     output: &Path,
+    password: Option<&str>,
     mut progress: Option<ProgressFn<'_>>,
 ) -> Result<()> {
     if inputs.is_empty() {
@@ -34,7 +39,7 @@ pub fn merge_with_progress(
             ));
         }
 
-        let doc = Document::open(path)?;
+        let doc = Document::open_with(path, password)?;
         tracing::debug!(path = %path.display(), pages = doc.page_count(), "merging input");
         sources.push(Source::all(doc.inner));
     }

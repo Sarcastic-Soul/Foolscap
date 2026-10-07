@@ -20,14 +20,20 @@ pub fn arrange(doc: Document, order: &[usize]) -> Result<Document> {
         return Err(PdfError::EmptySelection);
     }
 
-    let Document { inner, source } = doc;
+    let Document {
+        inner,
+        source,
+        was_encrypted,
+    } = doc;
 
     let assembled = assemble(vec![Source {
         doc: inner,
         pages: order.to_vec(),
     }])?;
 
-    Ok(Document::from_lopdf(assembled, source))
+    let mut arranged = Document::from_lopdf(assembled, source);
+    arranged.was_encrypted = was_encrypted;
+    Ok(arranged)
 }
 
 /// Remove the selected pages, keeping the rest in their existing order.

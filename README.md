@@ -116,6 +116,12 @@ rasterised before they are recognised.
 | `from-office`, `to-office` | LibreOffice conversion |
 | `ocr` | add an invisible text layer to a scan |
 | `extract-text` | read out the text a document already carries |
+| `decrypt` | write an unencrypted copy of a password-protected document |
+
+Every command reads password-protected input when given `--password`, or the
+password in the `FOOLSCAP_PASSWORD` environment variable, which keeps it out of
+shell history. Files that open without a password (an empty user password, as
+most restricted PDFs have) need neither. Output is always written unencrypted.
 
 ## Development
 

@@ -195,8 +195,8 @@ fn collect_image_ids(doc: &lopdf::Document) -> Vec<ObjectId> {
             let Object::Stream(stream) = object else {
                 return None;
             };
-            let subtype = stream.dict.get(b"Subtype").ok()?.as_name_str().ok()?;
-            (subtype == "Image").then_some(*id)
+            let subtype = stream.dict.get(b"Subtype").ok()?.as_name().ok()?;
+            (subtype == b"Image").then_some(*id)
         })
         .collect()
 }
@@ -282,12 +282,12 @@ fn decode_image(
 ) -> std::result::Result<DynamicImage, SkipReason> {
     let filters = stream.filters().unwrap_or_default();
 
-    match filters.last().map(String::as_str) {
-        Some("DCTDecode") => {
+    match filters.last().copied() {
+        Some(b"DCTDecode") => {
             image::load_from_memory_with_format(&stream.content, ImageFormat::Jpeg)
                 .map_err(|_| SkipReason::UnsupportedFilter)
         }
-        Some("FlateDecode") | None => decode_raw(doc, stream),
+        Some(b"FlateDecode") | None => decode_raw(doc, stream),
         // JPXDecode, CCITTFaxDecode, JBIG2Decode and friends need decoders this
         // pass does not carry.
         Some(_) => Err(SkipReason::UnsupportedFilter),
@@ -322,8 +322,8 @@ fn decode_raw(
     let colour = stream
         .dict
         .get(b"ColorSpace")
-        .and_then(Object::as_name_str)
-        .unwrap_or("DeviceRGB");
+        .and_then(Object::as_name)
+        .unwrap_or(b"DeviceRGB");
 
     let samples = if stream.filters().unwrap_or_default().is_empty() {
         // Decode parameters belong to a filter; with no filter there are none.
@@ -337,10 +337,10 @@ fn decode_raw(
     };
 
     match colour {
-        "DeviceRGB" | "RGB" => image::RgbImage::from_raw(width, height, samples)
+        b"DeviceRGB" | b"RGB" => image::RgbImage::from_raw(width, height, samples)
             .map(DynamicImage::ImageRgb8)
             .ok_or(SkipReason::UnsupportedColorSpace),
-        "DeviceGray" | "G" => image::GrayImage::from_raw(width, height, samples)
+        b"DeviceGray" | b"G" => image::GrayImage::from_raw(width, height, samples)
             .map(DynamicImage::ImageLuma8)
             .ok_or(SkipReason::UnsupportedColorSpace),
         // Indexed, Separation, DeviceN, ICCBased and CMYK all need the colour

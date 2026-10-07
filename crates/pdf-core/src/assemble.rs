@@ -95,24 +95,24 @@ pub(crate) fn assemble(sources: Vec<Source>) -> Result<lopdf::Document> {
         }
 
         for (id, object) in std::mem::take(&mut source.doc.objects) {
-            match object.type_name().unwrap_or("") {
-                "Page" => {
+            match object.type_name().unwrap_or(b"") {
+                b"Page" => {
                     if wanted.contains(&id) {
                         page_objects.insert(id, object.as_dict()?.clone());
                     }
                 }
-                "Catalog" => {
+                b"Catalog" => {
                     if catalog.is_none() {
                         catalog = Some((id, object.as_dict()?.clone()));
                     }
                 }
-                "Pages" => {
+                b"Pages" => {
                     if pages_node.is_none() {
                         pages_node = Some((id, object.as_dict()?.clone()));
                     }
                 }
                 // Both index pages by position; see the note on the function.
-                "Outlines" | "Outline" => {}
+                b"Outlines" | b"Outline" => {}
                 _ => {
                     other_objects.insert(id, object);
                 }

@@ -4,6 +4,7 @@ pub mod arrange;
 pub mod compress;
 #[cfg(feature = "convert")]
 pub mod convert;
+pub mod decrypt;
 pub mod info;
 pub mod merge;
 pub mod meta;

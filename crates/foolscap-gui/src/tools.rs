@@ -185,42 +185,42 @@ pub const TOOLS: &[Tool] = &[
         ToolId::Merge,
         "Merge",
         "Combine PDFs",
-        "document-merge-symbolic",
+        "view-dual-symbolic",
         Needs::NONE,
     ),
     tool(
         ToolId::Split,
         "Split",
         "Burst into pieces",
-        "document-split-symbolic",
+        "edit-cut-symbolic",
         Needs::NONE.document(),
     ),
     tool(
         ToolId::Compress,
         "Compress",
         "Shrink for sharing",
-        "package-symbolic",
+        "package-x-generic-symbolic",
         Needs::NONE.document(),
     ),
     tool(
         ToolId::Ocr,
         "OCR",
         "Make searchable",
-        "document-properties-symbolic",
+        "edit-find-symbolic",
         Needs::NONE.document().render().ocr(),
     ),
     tool(
         ToolId::ExtractText,
         "Extract text",
         "Plain text out",
-        "document-edit-symbolic",
+        "text-x-generic-symbolic",
         Needs::NONE.document().render(),
     ),
     tool(
         ToolId::ExtractHtml,
         "Extract HTML",
         "Text as HTML",
-        "text-html-symbolic",
+        "insert-link-symbolic",
         Needs::NONE.document().render().convert(),
     ),
     tool(
@@ -283,14 +283,14 @@ pub const TOOLS: &[Tool] = &[
         ToolId::PageNumbers,
         "Page numbers",
         "Folio the pages",
-        "format-ordered-list-symbolic",
+        "view-list-ordered-symbolic",
         Needs::NONE.document(),
     ),
     tool(
         ToolId::CropResize,
         "Crop / Resize",
         "Trim or scale the pages",
-        "object-crop-symbolic",
+        "zoom-fit-best-symbolic",
         Needs::NONE.document(),
     ),
     tool(
@@ -304,14 +304,14 @@ pub const TOOLS: &[Tool] = &[
         ToolId::Flatten,
         "Flatten",
         "Bake forms in",
-        "document-flatten-symbolic",
+        "view-continuous-symbolic",
         Needs::NONE.document(),
     ),
     tool(
         ToolId::Sign,
         "Sign",
         "Draw or type a signature",
-        "edit-signature-symbolic",
+        "document-edit-symbolic",
         Needs::NONE.document(),
     ),
 ];
@@ -389,5 +389,26 @@ mod tests {
         let split = TOOLS.iter().find(|t| t.id == ToolId::Split).unwrap();
         assert_eq!(split.disabled_reason(false), Some("Open a PDF first"));
         assert_eq!(split.disabled_reason(true), None);
+    }
+
+    /// The icon names come from the Adwaita set every GTK4 desktop has. A
+    /// name that is missing there draws as a warning triangle on the card.
+    #[test]
+    fn card_icons_exist_in_the_adwaita_set() {
+        let root = std::path::Path::new("/usr/share/icons/Adwaita/symbolic");
+        if !root.is_dir() {
+            eprintln!("skipping: the Adwaita icon set is not installed");
+            return;
+        }
+        let have = |name: &str| {
+            std::fs::read_dir(root)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|group| group.path().join(format!("{name}.svg")).exists())
+        };
+        for tool in TOOLS {
+            assert!(have(tool.icon), "{} has no icon {}", tool.title, tool.icon);
+        }
     }
 }

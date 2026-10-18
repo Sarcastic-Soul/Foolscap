@@ -16,8 +16,8 @@ use pdf_core::convert::{
 use pdf_core::ops::FlattenOptions;
 use pdf_core::render::{PageRenderer, RenderedPage, Scale};
 use pdf_core::{
-    CompressLevel, Document, EncryptOptions, Fit, PageRange, PageSize, PdfError, Progress, Rect,
-    StampOptions,
+    CompressLevel, Document, EncryptOptions, Fit, Margins, PageRange, PageSize, PdfError, Progress,
+    Rect, StampOptions,
 };
 
 /// Resolution limits for the main view, so that zooming or a very wide window
@@ -202,6 +202,8 @@ impl ImageOutput {
 pub enum CropAction {
     /// Show only this rectangle, in points from the bottom-left corner.
     Box(Rect),
+    /// Trim this much off each edge of every page, however big the page is.
+    Margins(Margins),
     /// Scale the content onto a standard page size.
     ScaleTo { size: PageSize, fit: Fit },
     /// Remove an earlier crop and show the whole page again.
@@ -654,9 +656,22 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                         Some(&mut pump),
                     )?;
 
+                    let mut left_alone = String::new();
+                    if report.pages_already_text > 0 {
+                        left_alone
+                            .push_str(&format!("; {} already had text", report.pages_already_text));
+                    }
+                    if report.pages_without_text > 0 {
+                        left_alone.push_str(&format!(
+                            "; {} had nothing to read",
+                            report.pages_without_text
+                        ));
+                    }
                     Ok(format!(
-                        "Recognised {} page(s) into {}{}",
+                        "Recognised {} of {} page(s){} into {}{}",
                         report.pages_recognised,
+                        report.pages_total,
+                        left_alone,
                         path.display(),
                         unprotected_note(unprotected)
                     ))
@@ -677,7 +692,8 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
             } => {
                 let result = (|| -> pdf_core::Result<String> {
                     let source = current_source(&primary_renderer)?;
-                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+                    let intermediate =
+                        stage(&source, &passwords, &edits)?.write_temporary_as(&source)?;
 
                     let options = PdfToImagesOptions {
                         dpi,
@@ -796,7 +812,8 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
             } => {
                 let result = (|| -> pdf_core::Result<String> {
                     let source = current_source(&primary_renderer)?;
-                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+                    let intermediate =
+                        stage(&source, &passwords, &edits)?.write_temporary_as(&source)?;
                     let every = every.max(1);
                     let spec = pdf_core::SplitSpec::Every(every);
                     let mut pump = pump;
@@ -941,6 +958,15 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                     let verb = match action {
                         CropAction::Box(rect) => {
                             pdf_core::crop_with_progress(doc, &pages, rect, Some(&mut pump))?;
+                            "Cropped"
+                        }
+                        CropAction::Margins(margins) => {
+                            pdf_core::crop_margins_with_progress(
+                                doc,
+                                &pages,
+                                margins,
+                                Some(&mut pump),
+                            )?;
                             "Cropped"
                         }
                         CropAction::ScaleTo { size, fit } => {
@@ -1107,7 +1133,8 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
             } => {
                 let result = (|| -> pdf_core::Result<String> {
                     let source = current_source(&primary_renderer)?;
-                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+                    let intermediate =
+                        stage(&source, &passwords, &edits)?.write_temporary_as(&source)?;
 
                     // Text comes out of MuPDF, which reads a file; the staged
                     // copy has the edits applied and no password.
@@ -1375,12 +1402,22 @@ impl Staged {
         self.document.save(temporary.path())?;
         Ok(temporary)
     }
+
+    /// Like `write_temporary`, but the file keeps `source`'s name, for the
+    /// operations that name their output files after their input.
+    fn write_temporary_as(mut self, source: &Path) -> pdf_core::Result<Temporary> {
+        let temporary = Temporary::scratch_named(source)?;
+        self.document.save(temporary.path())?;
+        Ok(temporary)
+    }
 }
 
 /// A file removed when dropped, unless it is persisted first.
 struct Temporary {
     path: PathBuf,
     keep: bool,
+    /// A private directory made for this file, removed with it.
+    directory: Option<PathBuf>,
 }
 
 impl Temporary {
@@ -1389,7 +1426,27 @@ impl Temporary {
         Self {
             path: std::env::temp_dir().join(format!("foolscap-gui-{}.pdf", unique())),
             keep: false,
+            directory: None,
         }
+    }
+
+    /// A fresh path inside its own temporary directory, with the file name of
+    /// `source`.
+    fn scratch_named(source: &Path) -> pdf_core::Result<Self> {
+        let directory = std::env::temp_dir().join(format!("foolscap-gui-{}", unique()));
+        std::fs::create_dir_all(&directory).map_err(|error| PdfError::Io {
+            path: directory.clone(),
+            source: error,
+        })?;
+        let name = source
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or_else(|| "document.pdf".into());
+        Ok(Self {
+            path: directory.join(name),
+            keep: false,
+            directory: Some(directory),
+        })
     }
 
     /// A fresh, hidden path in the same directory as `destination`, so that
@@ -1402,6 +1459,7 @@ impl Temporary {
         Self {
             path: destination.with_file_name(format!(".{name}.foolscap-{}.tmp", unique())),
             keep: false,
+            directory: None,
         }
     }
 
@@ -1429,6 +1487,9 @@ impl Drop for Temporary {
     fn drop(&mut self) {
         if !self.keep {
             let _ = std::fs::remove_file(&self.path);
+        }
+        if let Some(directory) = &self.directory {
+            let _ = std::fs::remove_dir(directory);
         }
     }
 }

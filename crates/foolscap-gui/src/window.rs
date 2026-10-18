@@ -27,7 +27,7 @@ use pdf_core::convert::{ImageFormat, OfficeFormat};
 use pdf_core::ops::FlattenOptions;
 use pdf_core::render::RenderedPage;
 use pdf_core::{
-    Anchor, CompressLevel, Fit, PageRange, PageSize, PdfError, Point, Rect, StampContent,
+    Anchor, CompressLevel, Fit, Margins, PageRange, PageSize, PdfError, Point, Rect, StampContent,
     StampFont, StampLayer, StampOptions, Stroke,
 };
 
@@ -35,6 +35,7 @@ use crate::image::{diff, texture};
 use crate::queue::{JobStatus, Queue};
 use crate::state::{ComparisonSide, ComparisonState, State};
 use crate::tools::{Tool, TOOLS};
+use crate::units::{check_margins, kept_fractions, MarginValues, Unit};
 use crate::worker::{
     self, CompareRenderRequest, CropAction, Edits, ImageOutput, Purpose, RedactTarget, RenderSlot,
     Request, Response, Size, Task,
@@ -2716,12 +2717,28 @@ impl App {
         );
     }
 
-    /// Crop to a box, scale to a standard size, or undo an earlier crop.
+    /// Crop by margins or to an exact box, scale to a standard size, or undo an
+    /// earlier crop.
     fn crop(self: &Rc<Self>) {
         if !self.require_document_queued() {
             return;
         }
         let count = self.state.borrow().visible_pages();
+
+        // What the main view shows: the page as the user sees it, with its
+        // size in points worked out from the render resolution. It gives the
+        // preview its picture and lets the form check margins against a real
+        // page before the job starts.
+        let shown = self.ui.page_view.paintable().filter(|paintable| {
+            paintable.intrinsic_width() > 0 && paintable.intrinsic_height() > 0
+        });
+        let page_points = shown.as_ref().map(|paintable| {
+            let to_points = 72.0 / f64::from(self.view_dpi.get().max(1.0));
+            (
+                f64::from(paintable.intrinsic_width()) * to_points,
+                f64::from(paintable.intrinsic_height()) * to_points,
+            )
+        });
 
         show_form(
             &self.ui.window,
@@ -2729,7 +2746,8 @@ impl App {
             "Choose where to save…",
             |fields| {
                 let mode = dropdown(&[
-                    "Crop to a box",
+                    "Crop by margins",
+                    "Crop to an exact box",
                     "Scale to a page size",
                     "Remove an earlier crop",
                 ]);
@@ -2737,6 +2755,93 @@ impl App {
                 fields.add("What to do", &mode);
                 fields.add("Pages", &pages);
 
+                // Margins: the same amount off every selected page, however
+                // big each one is.
+                let unit = dropdown(&[
+                    Unit::Points.name(),
+                    Unit::Millimetres.name(),
+                    Unit::Inches.name(),
+                ]);
+                let margin_spin = |points: f64| {
+                    let unit = Unit::Points;
+                    let button = spin(points, 0.0, 5000.0, unit.step());
+                    button.set_digits(unit.digits());
+                    button
+                };
+                let top = margin_spin(36.0);
+                let bottom = margin_spin(36.0);
+                let left = margin_spin(36.0);
+                let right = margin_spin(36.0);
+                // The margin fields sit in a column beside the preview.
+                let margin_fields = Fields {
+                    content: GtkBox::new(Orientation::Vertical, 10),
+                };
+                margin_fields.add("Units", &unit);
+                margin_fields.add("Top margin", &top);
+                margin_fields.add("Bottom margin", &bottom);
+                margin_fields.add("Left margin", &left);
+                margin_fields.add("Right margin", &right);
+                let spins = [top.clone(), bottom.clone(), left.clone(), right.clone()];
+                let current_unit = Rc::new(Cell::new(Unit::Points));
+                unit.connect_selected_notify(clone!(
+                    #[strong]
+                    current_unit,
+                    #[strong]
+                    spins,
+                    move |unit| {
+                        // Keep the same amount of paper, shown in the new unit.
+                        let (before, after) =
+                            (current_unit.get(), Unit::from_index(unit.selected()));
+                        for button in &spins {
+                            let points = before.to_points(button.value());
+                            button.set_digits(after.digits());
+                            button.set_increments(after.step(), after.step() * 5.0);
+                            button.set_range(0.0, after.points_in(5000.0));
+                            button.set_value(after.points_in(points));
+                        }
+                        current_unit.set(after);
+                    }
+                ));
+
+                let read_margins = {
+                    let spins = spins.clone();
+                    let current_unit = current_unit.clone();
+                    move || {
+                        let unit = current_unit.get();
+                        MarginValues {
+                            top: unit.to_points(spins[0].value()),
+                            bottom: unit.to_points(spins[1].value()),
+                            left: unit.to_points(spins[2].value()),
+                            right: unit.to_points(spins[3].value()),
+                        }
+                    }
+                };
+
+                // A small picture of the current page with the part that stays.
+                let preview_area = margin_preview(shown, page_points, read_margins.clone());
+                for button in &spins {
+                    button.connect_value_changed(clone!(
+                        #[weak]
+                        preview_area,
+                        move |_| preview_area.queue_draw()
+                    ));
+                }
+                unit.connect_selected_notify(clone!(
+                    #[weak]
+                    preview_area,
+                    move |_| preview_area.queue_draw()
+                ));
+                let margin_block = GtkBox::new(Orientation::Horizontal, 16);
+                margin_block.append(&margin_fields.content);
+                margin_block.append(&preview_area);
+                fields.wide(&margin_block);
+                let margin_note = fields.note(if page_points.is_some() {
+                    "The preview shows the page you are looking at. Every selected page loses the same margins, measured from its own edges."
+                } else {
+                    "Every selected page loses the same margins, measured from its own edges."
+                });
+
+                // An exact box, for when the numbers are already known.
                 let x = spin(36.0, 0.0, 5000.0, 6.0);
                 let y = spin(36.0, 0.0, 5000.0, 6.0);
                 let width = spin(523.0, 1.0, 5000.0, 6.0);
@@ -2746,7 +2851,7 @@ impl App {
                     fields.add("Bottom (points)", &y),
                     fields.add("Width (points)", &width),
                     fields.add("Height (points)", &height),
-                    fields.note("Measured from the bottom-left corner. 72 points make an inch."),
+                    fields.note("Measured from the bottom-left corner. 72 points make an inch. The same box is used on every selected page."),
                 ];
 
                 let size = dropdown(&["A4", "Letter", "Legal"]);
@@ -2758,11 +2863,13 @@ impl App {
                 let size_rows = [fields.add("Page size", &size), fields.add("Scaling", &fit)];
 
                 on_choice(&mode, move |chosen| {
+                    margin_block.set_visible(chosen == 0);
+                    margin_note.set_visible(chosen == 0);
                     for row in &box_rows {
-                        row.set_visible(chosen == 0);
+                        row.set_visible(chosen == 1);
                     }
                     for row in &size_rows {
-                        row.set_visible(chosen == 1);
+                        row.set_visible(chosen == 2);
                     }
                 });
 
@@ -2770,6 +2877,16 @@ impl App {
                     let range = pages_from(&pages, count)?;
                     let action = match mode.selected() {
                         0 => {
+                            let margins = read_margins();
+                            check_margins(&margins, page_points, current_unit.get())?;
+                            CropAction::Margins(Margins {
+                                top: margins.top as f32,
+                                bottom: margins.bottom as f32,
+                                left: margins.left as f32,
+                                right: margins.right as f32,
+                            })
+                        }
+                        1 => {
                             let rect = Rect::from_xywh(
                                 x.value() as f32,
                                 y.value() as f32,
@@ -2779,7 +2896,7 @@ impl App {
                             .map_err(|error| error.to_string())?;
                             CropAction::Box(rect)
                         }
-                        1 => CropAction::ScaleTo {
+                        2 => CropAction::ScaleTo {
                             size: match size.selected() {
                                 1 => PageSize::Letter,
                                 2 => PageSize::Legal,
@@ -2884,7 +3001,7 @@ impl App {
                 let text = text_entry("");
                 let text_rows = [
                     fields.add("Text to remove", &text),
-                    fields.note("Every place the text appears on the chosen pages is removed."),
+                    fields.note("Removes every piece of text that contains this, whole. A line written as one piece goes completely, not just the matching words. Case counts. No black box is drawn."),
                 ];
 
                 let x = spin(72.0, 0.0, 5000.0, 6.0);
@@ -3940,6 +4057,31 @@ fn show_form<T: 'static>(
         move |_| dialog.close()
     ));
 
+    // A message about an earlier attempt is stale as soon as the user changes
+    // anything, so clear it on the next click or key. This runs before the
+    // OK button's own handler, which shows a fresh message if one still applies.
+    let clicks = gtk4::GestureClick::new();
+    clicks.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    clicks.connect_released(clone!(
+        #[weak]
+        problem,
+        move |_, _, _, _| problem.set_visible(false)
+    ));
+    content.add_controller(clicks);
+    let typing = gtk4::EventControllerKey::new();
+    typing.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    typing.connect_key_pressed(clone!(
+        #[weak]
+        problem,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |_, _, _, _| {
+            problem.set_visible(false);
+            glib::Propagation::Proceed
+        }
+    ));
+    content.add_controller(typing);
+
     let escape = gtk4::EventControllerKey::new();
     escape.connect_key_pressed(clone!(
         #[weak]
@@ -4007,6 +4149,71 @@ fn pages_from(entry: &gtk4::Entry, page_count: usize) -> Result<PageRange, Strin
 fn on_choice(dropdown: &DropDown, change: impl Fn(u32) + 'static) {
     change(dropdown.selected());
     dropdown.connect_selected_notify(move |dropdown| change(dropdown.selected()));
+}
+
+/// A small picture of a page with the part a margin crop keeps. `margins`
+/// is read on every draw, so the picture follows the form.
+fn margin_preview(
+    paintable: Option<gdk::Paintable>,
+    page_points: Option<(f64, f64)>,
+    margins: impl Fn() -> MarginValues + 'static,
+) -> gtk4::DrawingArea {
+    // Fit the page into a box of this size, or show a sheet of paper when no
+    // page has been drawn yet.
+    const LONGEST: f64 = 200.0;
+    let page = page_points.unwrap_or((595.0, 842.0));
+    let scale = LONGEST / page.0.max(page.1);
+    let (box_width, box_height) = (
+        (page.0 * scale).round().max(40.0) as i32,
+        (page.1 * scale).round().max(40.0) as i32,
+    );
+
+    let area = gtk4::DrawingArea::builder()
+        .content_width(box_width)
+        .content_height(box_height)
+        .halign(Align::Center)
+        .valign(Align::Start)
+        .css_classes(["card"])
+        .build();
+    area.update_property(&[gtk4::accessible::Property::Label(
+        "Preview of the part of the page that stays",
+    )]);
+    area.set_draw_func(move |_, cr, area_width, area_height| {
+        let (w, h) = (f64::from(area_width), f64::from(area_height));
+
+        // The page itself: white paper, then its picture when there is one.
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        let _ = cr.paint();
+        if let Some(paintable) = &paintable {
+            let snapshot = gtk4::Snapshot::new();
+            paintable.snapshot(snapshot.upcast_ref::<gdk::Snapshot>(), w, h);
+            if let Some(node) = snapshot.to_node() {
+                node.draw(cr);
+            }
+        }
+
+        let (left, top, right, bottom) = kept_fractions(&margins(), page);
+        let (x0, y0, x1, y1) = (left * w, top * h, right * w, bottom * h);
+
+        // Dim what will be hidden: four bands round the kept box.
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.5);
+        cr.rectangle(0.0, 0.0, w, y0);
+        cr.rectangle(0.0, y1, w, h - y1);
+        cr.rectangle(0.0, y0, x0, y1 - y0);
+        cr.rectangle(x1, y0, w - x1, y1 - y0);
+        let _ = cr.fill();
+
+        cr.set_source_rgb(0.85, 0.2, 0.2);
+        cr.set_line_width(1.5);
+        cr.rectangle(
+            x0 + 0.75,
+            y0 + 0.75,
+            (x1 - x0 - 1.5).max(0.0),
+            (y1 - y0 - 1.5).max(0.0),
+        );
+        let _ = cr.stroke();
+    });
+    area
 }
 
 // ==================== SIGNATURE PAD ====================

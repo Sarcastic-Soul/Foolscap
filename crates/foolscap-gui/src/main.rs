@@ -7,6 +7,7 @@ mod image;
 mod queue;
 mod state;
 mod tools;
+mod units;
 mod window;
 mod worker;
 

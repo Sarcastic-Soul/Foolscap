@@ -383,7 +383,7 @@ saves correctly.
 
 ## Every stage is built
 
-All seven stages are implemented, with 467 tests passing and
+All seven stages are implemented, with 513 tests passing and
 `clippy -D warnings` clean across every feature combination.
 
 ### What the plan got wrong
@@ -482,8 +482,7 @@ order of value:
 Built after the roadmap above, and covered by the same test and clippy gates.
 
 - **Page edits.** `crop` (box, scale, reset), `filter` (recolour images),
-  `redact` (by area or by found text; coarse, since it removes whole text runs
-  and does not touch Form XObject text or image pixels), `flatten`, `strip`,
+  `redact` (by area or by found text; cuts the covered glyphs out of text, including inside Form XObjects, blanks covered image pixels in the image data, and removes small paths; annotations, partly covered paths, inline images and shadings are not touched), `flatten`, `strip`,
   `repair` (rebuilds a damaged cross-reference table and wrong stream lengths).
 - **Stamping.** `stamp`, `watermark`, `page-numbers`, `header-footer`.
 - **Encryption.** `encrypt` writes AES-256 output with chosen permissions.
@@ -491,6 +490,6 @@ Built after the roadmap above, and covered by the same test and clippy gates.
 - **GUI.** A form and worker handler for each tool above, a job queue with cancel,
   a compare view, and greying out through `Capabilities::current()`.
 
-Still open: `repair` cannot open encrypted input; crop in the GUI takes a box in
-points rather than margins; dialogs and the compare view have only been checked
-through unit tests and one headless open, not by hand.
+The GUI crop dialog takes margins in points, millimetres or inches, per page,
+with a live preview. Every tool dialog and the compare view have been run and
+checked by hand under headless X11.

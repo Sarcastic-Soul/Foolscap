@@ -4,7 +4,9 @@
 //! onto it. No PDF logic lives here.
 
 mod image;
+mod queue;
 mod state;
+mod tools;
 mod window;
 mod worker;
 

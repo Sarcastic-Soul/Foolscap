@@ -348,6 +348,78 @@ impl State {
     }
 }
 
+/// Holds two document states for side-by-side comparison with optional
+/// synchronised navigation.
+#[derive(Debug, Default)]
+pub struct ComparisonState {
+    pub left: State,
+    pub right: State,
+    /// When true, scroll, zoom, and page changes on one side are mirrored to the other.
+    pub sync: bool,
+}
+
+impl ComparisonState {
+    /// Open a document on the left side.
+    pub fn open_left(&mut self, path: PathBuf, page_count: usize) {
+        self.left.open(path, page_count);
+    }
+
+    /// Open a document on the right side.
+    pub fn open_right(&mut self, path: PathBuf, page_count: usize) {
+        self.right.open(path, page_count);
+    }
+
+    /// One side's document state.
+    pub fn side(&self, side: ComparisonSide) -> &State {
+        match side {
+            ComparisonSide::Left => &self.left,
+            ComparisonSide::Right => &self.right,
+        }
+    }
+
+    /// Whether both sides have a document open.
+    pub fn both_open(&self) -> bool {
+        self.left.is_open() && self.right.is_open()
+    }
+
+    /// Apply a page change to one side, mirroring to the other if sync is enabled.
+    pub fn set_current(&mut self, side: ComparisonSide, position: usize) {
+        match side {
+            ComparisonSide::Left => {
+                self.left.current = position.min(self.left.visible_pages().saturating_sub(1));
+                if self.sync {
+                    self.right.current = self
+                        .left
+                        .current
+                        .min(self.right.visible_pages().saturating_sub(1));
+                }
+            }
+            ComparisonSide::Right => {
+                self.right.current = position.min(self.right.visible_pages().saturating_sub(1));
+                if self.sync {
+                    self.left.current = self
+                        .right
+                        .current
+                        .min(self.left.visible_pages().saturating_sub(1));
+                }
+            }
+        }
+    }
+
+    /// Toggle synchronised navigation.
+    pub fn toggle_sync(&mut self) -> bool {
+        self.sync = !self.sync;
+        self.sync
+    }
+}
+
+/// Which side of the comparison view an action applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComparisonSide {
+    Left,
+    Right,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

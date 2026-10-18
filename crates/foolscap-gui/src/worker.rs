@@ -10,8 +10,15 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use pdf_core::convert::{
+    pdf_to_office, ImageFormat, OfficeFormat, PdfToImagesOptions, TextToPdfOptions,
+};
+use pdf_core::ops::FlattenOptions;
 use pdf_core::render::{PageRenderer, RenderedPage, Scale};
-use pdf_core::{CompressLevel, Document, PageRange, PdfError, Progress};
+use pdf_core::{
+    CompressLevel, Document, EncryptOptions, Fit, PageRange, PageSize, PdfError, Progress, Rect,
+    StampOptions,
+};
 
 /// Resolution limits for the main view, so that zooming or a very wide window
 /// cannot ask MuPDF for an enormous bitmap.
@@ -19,7 +26,12 @@ const MIN_VIEW_DPI: f32 = 18.0;
 const MAX_VIEW_DPI: f32 = 600.0;
 
 /// Work the user interface asks for.
-#[derive(Debug)]
+///
+/// Long operations carry a `job_id` from the batch queue so progress and
+/// completion can be matched to the queued row. Immediate operations
+/// (`Open`, `Render`, `Save`, `Quit`) carry none.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Request {
     /// Open a document. `password` is needed only for a file that asks for
     /// one; a file unlocked earlier in the session reopens without it.
@@ -43,16 +55,21 @@ pub enum Request {
         path: PathBuf,
         level: CompressLevel,
         edits: Edits,
+        job_id: u64,
     },
     Ocr {
         path: PathBuf,
         language: String,
         edits: Edits,
+        job_id: u64,
     },
+    /// Rasterise every page, into a folder or one zip archive.
     ExportImages {
-        directory: PathBuf,
+        output: ImageOutput,
         dpi: f32,
+        format: ImageFormat,
         edits: Edits,
+        job_id: u64,
     },
     /// Combine several files into `output`, then open it. `unlock` is a
     /// password for one of the inputs, given after the merge asked for it.
@@ -60,8 +77,175 @@ pub enum Request {
         inputs: Vec<PathBuf>,
         output: PathBuf,
         unlock: Option<(PathBuf, String)>,
+        job_id: u64,
+    },
+    /// Burst the open document into `directory`, `every` pages per piece.
+    Split {
+        directory: PathBuf,
+        every: usize,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Draw text, an image or a signature on the chosen pages. Watermarks,
+    /// page numbers and signatures all go through here; `task` says which one
+    /// asked, so a failure can be worded for it.
+    Stamp {
+        path: PathBuf,
+        options: Box<StampOptions>,
+        pages: PageRange,
+        task: Task,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Crop, resize or reset the page boxes.
+    Crop {
+        path: PathBuf,
+        action: CropAction,
+        pages: PageRange,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Cover a region, or every run of matching text, on the chosen pages.
+    Redact {
+        path: PathBuf,
+        target: RedactTarget,
+        pages: PageRange,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Bake forms and annotations into the page content.
+    Flatten {
+        path: PathBuf,
+        options: FlattenOptions,
+        pages: PageRange,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Write an AES-256 protected copy.
+    Encrypt {
+        path: PathBuf,
+        user_password: String,
+        owner_password: String,
+        edits: Edits,
+        job_id: u64,
+    },
+    ExportText {
+        path: PathBuf,
+        edits: Edits,
+        job_id: u64,
+    },
+    ExportHtml {
+        path: PathBuf,
+        edits: Edits,
+        job_id: u64,
+    },
+    FromImages {
+        inputs: Vec<PathBuf>,
+        output: PathBuf,
+        job_id: u64,
+    },
+    FromOffice {
+        input: PathBuf,
+        output_dir: PathBuf,
+        job_id: u64,
+    },
+    /// PDF into an office format (lossy).
+    ToOffice {
+        format: OfficeFormat,
+        output_dir: PathBuf,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// `input` is the source file; the worker reads it, so the GTK thread
+    /// never does IO.
+    FromText {
+        input: PathBuf,
+        output: PathBuf,
+        job_id: u64,
+    },
+    FromMarkdown {
+        input: PathBuf,
+        output: PathBuf,
+        job_id: u64,
     },
     Quit,
+    /// Open a document for one side of the compare view.
+    CompareOpen {
+        path: PathBuf,
+        password: Option<String>,
+        slot: RenderSlot,
+    },
+    /// Render a page for comparison (left or right).
+    CompareRender(CompareRenderRequest),
+}
+
+/// Where exported page images go.
+#[derive(Debug, Clone)]
+pub enum ImageOutput {
+    /// One file per page, in this folder.
+    Folder(PathBuf),
+    /// Every page inside one zip archive.
+    Zip(PathBuf),
+}
+
+impl ImageOutput {
+    /// What the user chose, for the queue row.
+    pub fn display(&self) -> String {
+        match self {
+            ImageOutput::Folder(path) | ImageOutput::Zip(path) => path.display().to_string(),
+        }
+    }
+}
+
+/// What a crop job does to the page boxes.
+#[derive(Debug, Clone, Copy)]
+pub enum CropAction {
+    /// Show only this rectangle, in points from the bottom-left corner.
+    Box(Rect),
+    /// Scale the content onto a standard page size.
+    ScaleTo { size: PageSize, fit: Fit },
+    /// Remove an earlier crop and show the whole page again.
+    Reset,
+}
+
+/// What a redact job removes.
+#[derive(Debug, Clone)]
+pub enum RedactTarget {
+    /// Black out this rectangle, in points from the bottom-left corner.
+    Region(Rect),
+    /// Remove every run of text containing this string.
+    Text(String),
+}
+
+impl Request {
+    /// The batch job this request belongs to, if any.
+    pub fn job_id(&self) -> Option<u64> {
+        match self {
+            Request::Compress { job_id, .. }
+            | Request::Ocr { job_id, .. }
+            | Request::ExportImages { job_id, .. }
+            | Request::Merge { job_id, .. }
+            | Request::Split { job_id, .. }
+            | Request::Stamp { job_id, .. }
+            | Request::Crop { job_id, .. }
+            | Request::Redact { job_id, .. }
+            | Request::Flatten { job_id, .. }
+            | Request::Encrypt { job_id, .. }
+            | Request::ExportText { job_id, .. }
+            | Request::ExportHtml { job_id, .. }
+            | Request::FromImages { job_id, .. }
+            | Request::FromOffice { job_id, .. }
+            | Request::ToOffice { job_id, .. }
+            | Request::FromText { job_id, .. }
+            | Request::FromMarkdown { job_id, .. } => Some(*job_id),
+            Request::Open { .. }
+            | Request::Render { .. }
+            | Request::Save { .. }
+            | Request::Quit
+            | Request::CompareOpen { .. }
+            | Request::CompareRender(_) => None,
+        }
+    }
 }
 
 /// How big to draw a page.
@@ -91,14 +275,32 @@ pub enum Purpose {
 /// The operation a failure belongs to, so the window can decide how loudly to
 /// report it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Task {
     Open,
+    /// Opening a document for the compare view.
+    CompareOpen,
     Render,
     Save,
     Compress,
     Ocr,
     Export,
     Merge,
+    Split,
+    Stamp,
+    PageNumbers,
+    Sign,
+    Crop,
+    Redact,
+    Flatten,
+    Encrypt,
+    ExportText,
+    ExportHtml,
+    FromImages,
+    FromOffice,
+    ToOffice,
+    FromText,
+    FromMarkdown,
 }
 
 /// The pending changes to apply before writing anything out.
@@ -129,6 +331,12 @@ pub enum Response {
         path: PathBuf,
         page_count: usize,
     },
+    /// Second document opened for comparison.
+    CompareOpened {
+        path: PathBuf,
+        page_count: usize,
+        slot: RenderSlot,
+    },
     Rendered {
         page: usize,
         generation: u64,
@@ -136,6 +344,15 @@ pub enum Response {
         /// The resolution used, which sets the main view's zoom level.
         dpi: f32,
         image: Arc<RenderedPage>,
+    },
+    /// Rendered page for comparison mode.
+    CompareRendered {
+        page: usize,
+        generation: u64,
+        purpose: Purpose,
+        dpi: f32,
+        image: Arc<RenderedPage>,
+        slot: RenderSlot,
     },
     Progress(String),
     /// The open file is about to be overwritten, so pages are now read from a
@@ -152,10 +369,48 @@ pub enum Response {
     Finished {
         message: String,
     },
+    /// Determinate progress for a queued job: `fraction` is 0.0..=1.0 when
+    /// the total is known, `None` for an indeterminate step.
+    JobProgress {
+        job_id: u64,
+        fraction: Option<f32>,
+        message: String,
+    },
+    /// A queued job completed.
+    JobFinished {
+        job_id: u64,
+        message: String,
+    },
     Failed {
         task: Task,
         error: PdfError,
     },
+}
+
+impl Response {
+    /// The batch job this response belongs to, if any.
+    #[allow(dead_code)]
+    pub fn job_id(&self) -> Option<u64> {
+        match self {
+            Response::JobProgress { job_id, .. } | Response::JobFinished { job_id, .. } => {
+                Some(*job_id)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Return the compare renderer for the given slot. They are separate from the
+/// main document's renderer, so the compare view never disturbs the page view.
+fn renderer_for_slot<'a>(
+    slot: RenderSlot,
+    left: &'a mut Option<PageRenderer>,
+    right: &'a mut Option<PageRenderer>,
+) -> &'a mut Option<PageRenderer> {
+    match slot {
+        RenderSlot::Primary => left,
+        RenderSlot::Secondary => right,
+    }
 }
 
 /// Start the worker thread and return the ends of its two channels.
@@ -171,8 +426,28 @@ pub fn spawn() -> (mpsc::Sender<Request>, async_channel::Receiver<Response>) {
     (to_worker, from_worker)
 }
 
+/// Which side of the compare view a request or reply belongs to: `Primary` is
+/// the left side, `Secondary` the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderSlot {
+    Primary,
+    Secondary,
+}
+
+/// Extended render request for comparison mode.
+#[derive(Debug, Clone)]
+pub struct CompareRenderRequest {
+    pub page: usize,
+    pub size: Size,
+    pub purpose: Purpose,
+    pub generation: u64,
+    pub slot: RenderSlot,
+}
+
 fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Response>) {
-    let mut renderer: Option<PageRenderer> = None;
+    let mut primary_renderer: Option<PageRenderer> = None;
+    let mut compare_left: Option<PageRenderer> = None;
+    let mut compare_right: Option<PageRenderer> = None;
     // Private copies of files that were overwritten while open. They live as
     // long as the window, since undo may still need their pages.
     let mut copies: Vec<Temporary> = Vec::new();
@@ -187,9 +462,31 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
         let _ = responses.send_blocking(response);
     };
     let fail = |task: Task, error: PdfError| say(Response::Failed { task, error });
-    let tick = |progress: Progress| say(Response::Progress(progress.message));
 
     while let Ok(request) = requests.recv() {
+        // The id of the batch job being served, if any. Progress and
+        // completion are reported against it as well as on the legacy
+        // string pump, so the queue panel can show a determinate fraction.
+        let job_id = request.job_id();
+        let pump = |progress: Progress| {
+            say(Response::Progress(progress.message.clone()));
+            if let Some(job_id) = job_id {
+                say(Response::JobProgress {
+                    job_id,
+                    fraction: progress.fraction(),
+                    message: progress.message,
+                });
+            }
+        };
+        let done = |message: String| {
+            say(Response::Finished {
+                message: message.clone(),
+            });
+            if let Some(job_id) = job_id {
+                say(Response::JobFinished { job_id, message });
+            }
+        };
+
         match request {
             Request::Quit => break,
 
@@ -201,10 +498,34 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                             passwords.insert(&path, password);
                         }
                         let page_count = opened.page_count();
-                        renderer = Some(opened);
+                        primary_renderer = Some(opened);
                         say(Response::Opened { path, page_count });
                     }
                     Err(error) => fail(Task::Open, error),
+                }
+            }
+
+            Request::CompareOpen {
+                path,
+                password,
+                slot,
+            } => {
+                let password = password.or_else(|| passwords.get(&path).map(str::to_string));
+                match PageRenderer::open_with(&path, password.as_deref()) {
+                    Ok(opened) => {
+                        if let Some(password) = password {
+                            passwords.insert(&path, password);
+                        }
+                        let page_count = opened.page_count();
+                        *renderer_for_slot(slot, &mut compare_left, &mut compare_right) =
+                            Some(opened);
+                        say(Response::CompareOpened {
+                            path,
+                            page_count,
+                            slot,
+                        });
+                    }
+                    Err(error) => fail(Task::CompareOpen, error),
                 }
             }
 
@@ -214,7 +535,7 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 purpose,
                 generation,
             } => {
-                let Some(renderer) = renderer.as_ref() else {
+                let Some(renderer) = primary_renderer.as_ref() else {
                     continue;
                 };
 
@@ -230,10 +551,35 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 }
             }
 
+            Request::CompareRender(req) => {
+                let renderer_slot =
+                    renderer_for_slot(req.slot, &mut compare_left, &mut compare_right);
+                let Some(renderer) = renderer_slot.as_ref() else {
+                    continue;
+                };
+
+                match render(renderer, req.page, req.size) {
+                    Ok((dpi, image)) => say(Response::CompareRendered {
+                        page: req.page,
+                        generation: req.generation,
+                        purpose: req.purpose,
+                        dpi,
+                        image,
+                        slot: req.slot,
+                    }),
+                    Err(error) => fail(Task::Render, error),
+                }
+            }
+
             Request::Save { path, edits } => {
-                let result =
-                    protect_source(&mut renderer, &mut copies, &mut passwords, &path, &say)
-                        .and_then(|source| write_edited(&source, &passwords, &path, &edits));
+                let result = protect_source(
+                    &mut primary_renderer,
+                    &mut copies,
+                    &mut passwords,
+                    &path,
+                    &say,
+                )
+                .and_then(|source| write_edited(&source, &passwords, &path, &edits));
 
                 match result {
                     Ok(unprotected) => say(Response::Saved { path, unprotected }),
@@ -241,10 +587,20 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 }
             }
 
-            Request::Compress { path, level, edits } => {
+            Request::Compress {
+                path,
+                level,
+                edits,
+                job_id: _,
+            } => {
                 let result = (|| -> pdf_core::Result<String> {
-                    let source =
-                        protect_source(&mut renderer, &mut copies, &mut passwords, &path, &say)?;
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
                     let mut doc = stage(&source, &passwords, &edits)?.document;
                     let unprotected = doc.was_encrypted();
                     let report = pdf_core::compress(&mut doc, level)?;
@@ -258,7 +614,7 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 })();
 
                 match result {
-                    Ok(message) => say(Response::Finished { message }),
+                    Ok(message) => done(message),
                     Err(error) => fail(Task::Compress, error),
                 }
             }
@@ -267,10 +623,16 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 path,
                 language,
                 edits,
+                job_id: _,
             } => {
                 let result = (|| -> pdf_core::Result<String> {
-                    let source =
-                        protect_source(&mut renderer, &mut copies, &mut passwords, &path, &say)?;
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
 
                     // Recognition works from a file, so the edited document has
                     // to exist on disk first. It is written decrypted, so no
@@ -284,12 +646,12 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                         ..Default::default()
                     };
 
-                    let mut tick = tick;
+                    let mut pump = pump;
                     let report = pdf_core::ocr_with_progress(
                         intermediate.path(),
                         &path,
                         &options,
-                        Some(&mut tick),
+                        Some(&mut pump),
                     )?;
 
                     Ok(format!(
@@ -301,40 +663,61 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 })();
 
                 match result {
-                    Ok(message) => say(Response::Finished { message }),
+                    Ok(message) => done(message),
                     Err(error) => fail(Task::Ocr, error),
                 }
             }
 
             Request::ExportImages {
-                directory,
+                output,
                 dpi,
+                format,
                 edits,
+                job_id: _,
             } => {
                 let result = (|| -> pdf_core::Result<String> {
-                    let source = current_source(&renderer)?;
+                    let source = current_source(&primary_renderer)?;
                     let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
 
-                    let options = pdf_core::convert::PdfToImagesOptions {
+                    let options = PdfToImagesOptions {
                         dpi,
+                        format,
                         ..Default::default()
                     };
 
-                    let written = pdf_core::convert::pdf_to_images(
-                        intermediate.path(),
-                        &directory,
-                        &options,
-                    )?;
-
-                    Ok(format!(
-                        "Exported {} image(s) to {}",
-                        written.len(),
-                        directory.display()
-                    ))
+                    let mut pump = pump;
+                    match &output {
+                        ImageOutput::Folder(directory) => {
+                            let written = pdf_core::convert::pdf_to_images_with_progress(
+                                intermediate.path(),
+                                directory,
+                                &options,
+                                Some(&mut pump),
+                            )?;
+                            Ok(format!(
+                                "Exported {} image(s) to {}",
+                                written.len(),
+                                directory.display()
+                            ))
+                        }
+                        ImageOutput::Zip(archive) => {
+                            let names = pdf_core::convert::pdf_to_zip_with_progress(
+                                intermediate.path(),
+                                archive,
+                                &options,
+                                Some(&mut pump),
+                            )?;
+                            Ok(format!(
+                                "Packed {} image(s) into {}",
+                                names.len(),
+                                archive.display()
+                            ))
+                        }
+                    }
                 })();
 
                 match result {
-                    Ok(message) => say(Response::Finished { message }),
+                    Ok(message) => done(message),
                     Err(error) => fail(Task::Export, error),
                 }
             }
@@ -343,12 +726,19 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 inputs,
                 output,
                 unlock,
+                job_id: _,
             } => {
                 let result = (|| -> pdf_core::Result<PageRenderer> {
                     // Merging over the open file is allowed; the private copy
                     // keeps the way back to it for undo.
-                    if renderer.is_some() {
-                        protect_source(&mut renderer, &mut copies, &mut passwords, &output, &say)?;
+                    if primary_renderer.is_some() {
+                        protect_source(
+                            &mut primary_renderer,
+                            &mut copies,
+                            &mut passwords,
+                            &output,
+                            &say,
+                        )?;
                     }
 
                     // Each protected input may have its own password and the
@@ -376,8 +766,8 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                     }
 
                     let scratch = Temporary::beside(&output);
-                    let mut tick = tick;
-                    pdf_core::merge_with_progress(&sources, scratch.path(), None, Some(&mut tick))?;
+                    let mut pump = pump;
+                    pdf_core::merge_with_progress(&sources, scratch.path(), None, Some(&mut pump))?;
                     drop(decrypted);
                     scratch.persist(&output)?;
 
@@ -387,17 +777,499 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 match result {
                     Ok(opened) => {
                         let page_count = opened.page_count();
-                        renderer = Some(opened);
+                        primary_renderer = Some(opened);
                         say(Response::Opened {
-                            path: output,
+                            path: output.clone(),
                             page_count,
                         });
+                        done(format!("Merged into {}", output.display()));
                     }
                     Err(error) => fail(Task::Merge, error),
                 }
             }
+
+            Request::Split {
+                directory,
+                every,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = current_source(&primary_renderer)?;
+                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+                    let every = every.max(1);
+                    let spec = pdf_core::SplitSpec::Every(every);
+                    let mut pump = pump;
+                    let written = pdf_core::split_with_progress(
+                        intermediate.path(),
+                        &spec,
+                        &directory,
+                        None,
+                        Some(&mut pump),
+                    )?;
+                    Ok(format!(
+                        "Split into {} file(s) in {}",
+                        written.len(),
+                        directory.display()
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::Split, error),
+                }
+            }
+
+            Request::FromImages {
+                inputs,
+                output,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    if primary_renderer.is_some() {
+                        protect_source(
+                            &mut primary_renderer,
+                            &mut copies,
+                            &mut passwords,
+                            &output,
+                            &say,
+                        )?;
+                    }
+                    let options = pdf_core::convert::ImagesToPdfOptions::default();
+                    let mut pump = pump;
+                    pdf_core::convert::images_to_pdf_with_progress(
+                        &inputs,
+                        &output,
+                        options,
+                        Some(&mut pump),
+                    )?;
+                    Ok(format!(
+                        "Made {} from {} image(s)",
+                        output.display(),
+                        inputs.len()
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::FromImages, error),
+                }
+            }
+
+            Request::FromOffice {
+                input,
+                output_dir,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let written = pdf_core::convert::office::office_to_pdf(&input, &output_dir)?;
+                    Ok(format!("Converted to {}", written.display()))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::FromOffice, error),
+                }
+            }
+
+            Request::Stamp {
+                path,
+                options,
+                pages,
+                task,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let mut staged = stage(&source, &passwords, &edits)?;
+                    let unprotected = staged.document.was_encrypted();
+
+                    let mut pump = pump;
+                    pdf_core::stamp_with_progress(
+                        &mut staged.document,
+                        &pages,
+                        &options,
+                        Some(&mut pump),
+                    )?;
+
+                    save_atomically(&mut staged.document, &path)?;
+                    let verb = match task {
+                        Task::PageNumbers => "Numbered the pages of",
+                        Task::Sign => "Signed",
+                        _ => "Watermarked",
+                    };
+                    Ok(format!(
+                        "{verb} {}{}",
+                        path.display(),
+                        unprotected_note(unprotected)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(task, error),
+                }
+            }
+
+            Request::Crop {
+                path,
+                action,
+                pages,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let mut staged = stage(&source, &passwords, &edits)?;
+                    let unprotected = staged.document.was_encrypted();
+
+                    let mut pump = pump;
+                    let doc = &mut staged.document;
+                    let verb = match action {
+                        CropAction::Box(rect) => {
+                            pdf_core::crop_with_progress(doc, &pages, rect, Some(&mut pump))?;
+                            "Cropped"
+                        }
+                        CropAction::ScaleTo { size, fit } => {
+                            pdf_core::scale_to_with_progress(
+                                doc,
+                                &pages,
+                                size,
+                                fit,
+                                Some(&mut pump),
+                            )?;
+                            "Resized"
+                        }
+                        CropAction::Reset => {
+                            pdf_core::reset_crop(doc, &pages)?;
+                            "Restored the full page of"
+                        }
+                    };
+
+                    save_atomically(&mut staged.document, &path)?;
+                    Ok(format!(
+                        "{verb} {}{}",
+                        path.display(),
+                        unprotected_note(unprotected)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::Crop, error),
+                }
+            }
+
+            Request::Redact {
+                path,
+                target,
+                pages,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let mut staged = stage(&source, &passwords, &edits)?;
+                    let unprotected = staged.document.was_encrypted();
+
+                    let mut pump = pump;
+                    let report = match &target {
+                        RedactTarget::Region(rect) => pdf_core::redact_with_progress(
+                            &mut staged.document,
+                            &pages,
+                            *rect,
+                            Some(&mut pump),
+                        )?,
+                        RedactTarget::Text(needle) => pdf_core::redact_find_with_progress(
+                            &mut staged.document,
+                            &pages,
+                            needle,
+                            Some(&mut pump),
+                        )?,
+                    };
+
+                    save_atomically(&mut staged.document, &path)?;
+                    Ok(format!(
+                        "Redacted {} page(s), removing {} run(s) of text, into {}{}",
+                        report.pages_redacted,
+                        report.runs_removed,
+                        path.display(),
+                        unprotected_note(unprotected)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::Redact, error),
+                }
+            }
+
+            Request::Flatten {
+                path,
+                options,
+                pages,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let mut staged = stage(&source, &passwords, &edits)?;
+                    let unprotected = staged.document.was_encrypted();
+
+                    let mut pump = pump;
+                    let report = pdf_core::ops::flatten_with_progress(
+                        &mut staged.document,
+                        &pages,
+                        options,
+                        Some(&mut pump),
+                    )?;
+
+                    save_atomically(&mut staged.document, &path)?;
+                    Ok(format!(
+                        "Flattened {} form field(s) and {} annotation(s) into {}{}",
+                        report.widgets_flattened,
+                        report.annots_flattened,
+                        path.display(),
+                        unprotected_note(unprotected)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::Flatten, error),
+                }
+            }
+
+            Request::Encrypt {
+                path,
+                user_password,
+                owner_password,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let mut staged = stage(&source, &passwords, &edits)?;
+
+                    let options = EncryptOptions {
+                        user_password,
+                        owner_password,
+                        ..EncryptOptions::default()
+                    };
+                    let scratch = Temporary::beside(&path);
+                    staged.document.save_encrypted(scratch.path(), &options)?;
+                    scratch.persist(&path)?;
+
+                    Ok(format!("Wrote the protected copy {}", path.display()))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::Encrypt, error),
+                }
+            }
+
+            Request::ExportText {
+                path,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = current_source(&primary_renderer)?;
+                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+
+                    // Text comes out of MuPDF, which reads a file; the staged
+                    // copy has the edits applied and no password.
+                    let reader = PageRenderer::open(intermediate.path())?;
+                    let total = reader.page_count();
+                    let mut text = String::new();
+                    for page in 0..total {
+                        pump(Progress::new(
+                            page,
+                            Some(total),
+                            format!("reading page {} of {total}", page + 1),
+                        ));
+                        if page > 0 {
+                            text.push_str("\n\n");
+                        }
+                        text.push_str(reader.page_text(page)?.trim_end());
+                    }
+                    text.push('\n');
+
+                    let scratch = Temporary::beside(&path);
+                    std::fs::write(scratch.path(), text).map_err(|source| PdfError::Io {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    scratch.persist(&path)?;
+                    Ok(format!(
+                        "Extracted the text of {total} page(s) to {}",
+                        path.display()
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::ExportText, error),
+                }
+            }
+
+            Request::ExportHtml {
+                path,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = current_source(&primary_renderer)?;
+                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+
+                    let mut pump = pump;
+                    pdf_core::convert::pdf_to_html_with_progress(
+                        intermediate.path(),
+                        &path,
+                        &pdf_core::convert::PdfToHtmlOptions::default(),
+                        Some(&mut pump),
+                    )?;
+                    Ok(format!("Wrote {}", path.display()))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::ExportHtml, error),
+                }
+            }
+
+            Request::ToOffice {
+                format,
+                output_dir,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = current_source(&primary_renderer)?;
+                    let intermediate = stage(&source, &passwords, &edits)?.write_temporary()?;
+
+                    // The staged copy is never encrypted, so it needs no
+                    // password, and LibreOffice gives no progress to report.
+                    let produced = pdf_to_office(intermediate.path(), format, &output_dir, None)?;
+                    Ok(format!("Converted to {}", produced.display()))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::ToOffice, error),
+                }
+            }
+
+            Request::FromText {
+                input,
+                output,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    if primary_renderer.is_some() {
+                        protect_source(
+                            &mut primary_renderer,
+                            &mut copies,
+                            &mut passwords,
+                            &output,
+                            &say,
+                        )?;
+                    }
+                    let mut pump = pump;
+                    pdf_core::convert::text_file_to_pdf_with_progress(
+                        &input,
+                        &output,
+                        &TextToPdfOptions::default(),
+                        Some(&mut pump),
+                    )?;
+                    Ok(format!(
+                        "Made {} from {}",
+                        output.display(),
+                        file_label(&input)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::FromText, error),
+                }
+            }
+
+            Request::FromMarkdown {
+                input,
+                output,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    if primary_renderer.is_some() {
+                        protect_source(
+                            &mut primary_renderer,
+                            &mut copies,
+                            &mut passwords,
+                            &output,
+                            &say,
+                        )?;
+                    }
+                    let mut pump = pump;
+                    pdf_core::convert::markdown_file_to_pdf_with_progress(
+                        &input,
+                        &output,
+                        &TextToPdfOptions::default(),
+                        Some(&mut pump),
+                    )?;
+                    Ok(format!(
+                        "Made {} from {}",
+                        output.display(),
+                        file_label(&input)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::FromMarkdown, error),
+                }
+            }
         }
     }
+}
+
+/// The last part of a path, for a status message.
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// Draw one page, returning the resolution used along with the pixels.
@@ -789,7 +1661,9 @@ mod tests {
     fn answer(from_worker: &async_channel::Receiver<Response>) -> Response {
         loop {
             match from_worker.recv_blocking().expect("worker stopped") {
-                Response::Progress(_) => continue,
+                Response::Progress(_)
+                | Response::JobProgress { .. }
+                | Response::JobFinished { .. } => continue,
                 other => return other,
             }
         }
@@ -888,6 +1762,7 @@ mod tests {
             inputs: vec![plain.clone(), first.clone(), second.clone()],
             output: output.clone(),
             unlock: unlock.map(|(path, password)| (path.clone(), password.to_string())),
+            job_id: 0,
         };
 
         to_worker.send(merge(None)).unwrap();

@@ -65,6 +65,84 @@ fn rotate(page: &RenderedPage, degrees: i32) -> (u32, u32, Vec<u8>) {
     (new_width as u32, new_height as u32, rotated)
 }
 
+/// Two pages laid over each other, with the differences marked.
+pub struct Diff {
+    /// The pages as they were put side by side, in RGBA.
+    pub overlay: RenderedPage,
+    /// How many pixels differ by more than the tolerance.
+    pub changed: usize,
+    /// Pixels compared in all.
+    pub total: usize,
+}
+
+impl Diff {
+    /// Share of the page that differs, as a percentage.
+    pub fn percent(&self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            self.changed as f32 * 100.0 / self.total as f32
+        }
+    }
+}
+
+/// How far apart two colour values can be before they count as different.
+/// A little slack hides the faint edge noise that rendering the same page
+/// twice at slightly different sizes leaves behind.
+const DIFF_TOLERANCE: i32 = 24;
+
+/// Compare two rendered pages pixel by pixel.
+///
+/// The result is the left page, faded, with every pixel that differs from the
+/// right page painted red. Returns `None` when the pages are not the same size,
+/// because then there is no honest way to line the pixels up; the caller says
+/// so rather than showing a misleading mark.
+pub fn diff(left: &RenderedPage, right: &RenderedPage) -> Option<Diff> {
+    if left.width != right.width
+        || left.height != right.height
+        || left.channels != right.channels
+        || left.channels < 3
+    {
+        return None;
+    }
+
+    let channels = left.channels as usize;
+    let count = left.width as usize * left.height as usize;
+    let mut pixels = Vec::with_capacity(count * 4);
+    let mut changed = 0;
+
+    for at in 0..count {
+        let a = &left.pixels[at * channels..at * channels + 3];
+        let b = &right.pixels[at * channels..at * channels + 3];
+        let differs = a
+            .iter()
+            .zip(b)
+            .any(|(x, y)| (i32::from(*x) - i32::from(*y)).abs() > DIFF_TOLERANCE);
+
+        if differs {
+            changed += 1;
+            pixels.extend_from_slice(&[220, 38, 38, 255]);
+        } else {
+            // Fade the shared content toward white so the marks stand out.
+            for value in a {
+                pixels.push(((u16::from(*value) + 255 * 2) / 3) as u8);
+            }
+            pixels.push(255);
+        }
+    }
+
+    Some(Diff {
+        overlay: RenderedPage {
+            width: left.width,
+            height: left.height,
+            channels: 4,
+            pixels,
+        },
+        changed,
+        total: count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +233,59 @@ mod tests {
         let (width, height, pixels) = rotate(&page, 90);
         assert_eq!((width, height), (0, 0));
         assert!(pixels.is_empty());
+    }
+
+    fn flat(width: u32, height: u32, value: u8) -> RenderedPage {
+        RenderedPage {
+            width,
+            height,
+            channels: 3,
+            pixels: vec![value; (width * height * 3) as usize],
+        }
+    }
+
+    #[test]
+    fn identical_pages_have_no_differences() {
+        let page = flat(4, 4, 200);
+        let result = diff(&page, &page).unwrap();
+        assert_eq!(result.changed, 0);
+        assert_eq!(result.total, 16);
+        assert_eq!(result.percent(), 0.0);
+        assert_eq!(result.overlay.channels, 4);
+    }
+
+    #[test]
+    fn a_changed_pixel_is_marked_red() {
+        let left = flat(2, 1, 255);
+        let mut right = flat(2, 1, 255);
+        right.pixels[3..6].copy_from_slice(&[0, 0, 0]);
+
+        let result = diff(&left, &right).unwrap();
+        assert_eq!(result.changed, 1);
+        assert_eq!(&result.overlay.pixels[4..8], &[220, 38, 38, 255]);
+        assert_eq!(&result.overlay.pixels[0..4], &[255, 255, 255, 255]);
+        assert_eq!(result.percent(), 50.0);
+    }
+
+    #[test]
+    fn faint_noise_is_ignored() {
+        let result = diff(&flat(3, 3, 200), &flat(3, 3, 210)).unwrap();
+        assert_eq!(result.changed, 0);
+    }
+
+    #[test]
+    fn pages_of_different_sizes_cannot_be_compared() {
+        assert!(diff(&flat(2, 2, 0), &flat(3, 2, 0)).is_none());
+    }
+
+    #[test]
+    fn a_greyscale_page_cannot_be_compared() {
+        let grey = RenderedPage {
+            width: 1,
+            height: 1,
+            channels: 1,
+            pixels: vec![0],
+        };
+        assert!(diff(&grey, &grey).is_none());
     }
 }

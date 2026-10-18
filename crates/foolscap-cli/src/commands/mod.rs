@@ -16,6 +16,7 @@ pub mod meta;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod optimize;
+#[cfg(feature = "render")]
 pub mod overlay;
 pub mod redact;
 #[cfg(feature = "render")]

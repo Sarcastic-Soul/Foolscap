@@ -70,12 +70,12 @@ pub fn is_available() -> bool {
 
 /// Language codes Tesseract has data for.
 pub fn available_languages() -> Result<Vec<String>> {
-    languages()
+    Ok(languages()?.into_iter().filter(|l| l != "osd").collect())
 }
 
 /// The first installed language, or `eng` if the list is empty.
 pub fn first_available_language() -> Result<String> {
-    let langs = languages()?;
+    let langs = available_languages()?;
     Ok(langs.first().cloned().unwrap_or_else(|| "eng".to_string()))
 }
 
@@ -147,6 +147,26 @@ pub fn ocr_with_progress(
             report.pages_without_text += 1;
             continue;
         };
+
+        // Tesseract may produce an output file with no glyphs (blank page).
+        // Count such pages as "without text" rather than "recognised".
+        let layer_content = layer
+            .document
+            .get_pages()
+            .into_values()
+            .next()
+            .map(|pid| layer.document.get_page_content(pid))
+            .unwrap_or_default();
+        let layer_decoded = lopdf::content::Content::decode(&layer_content).ok();
+        let has_text = layer_decoded
+            .as_ref()
+            .map(overlay::draws_any_text)
+            .unwrap_or(false);
+
+        if !has_text {
+            report.pages_without_text += 1;
+            continue;
+        }
 
         // The text layer's coordinates are in the rasterised page's space. Both
         // derive from the same page at a known resolution, so the ratio of page

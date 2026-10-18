@@ -25,6 +25,7 @@ pub fn overlay(
     password: Option<&str>,
 ) -> Result<()> {
     let mut doc = Document::open_with(base_path, password)?;
+    let base_renderer = PageRenderer::open_with(base_path, password)?;
     let renderer = PageRenderer::open_with(overlay_path, password)?;
     let base_count = doc.page_count();
     let overlay_count = renderer.page_count();
@@ -32,9 +33,12 @@ pub fn overlay(
         return Err(PdfError::EmptySelection);
     }
 
+    let dpi = 150.0f32;
     for i in 0..base_count {
         let ov = i.min(overlay_count - 1);
-        let rendered = renderer.render(ov, Scale::Dpi(72.0))?;
+        let base_size = base_renderer.page_size(i)?;
+        let ov_size = renderer.page_size(ov)?;
+        let rendered = renderer.render(ov, Scale::Dpi(dpi))?;
         let img = DynamicImage::ImageRgb8(
             ImageBuffer::<Rgb<u8>, _>::from_raw(
                 rendered.width,
@@ -50,12 +54,20 @@ pub fn overlay(
                 source: std::io::Error::other(e.to_string()),
             })?;
 
+        // Scale the rendered overlay so it covers the base page. Rendered at
+        // `dpi`, one overlay point becomes dpi/72 pixels.
+        let scale = if ov_size.0 > 0.0 && ov_size.1 > 0.0 {
+            (base_size.0 / ov_size.0).min(base_size.1 / ov_size.1)
+        } else {
+            1.0
+        } * (72.0 / dpi);
+
         let opts = StampOptions {
             content: StampContent::Image(buf),
             anchor: crate::ops::stamp::Anchor::BottomLeft,
             margin: 0.0,
             opacity: 1.0,
-            image_scale: 1.0,
+            image_scale: scale.max(0.01),
             layer: StampLayer::Over,
             ..Default::default()
         };

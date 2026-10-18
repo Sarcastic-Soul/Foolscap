@@ -88,7 +88,7 @@ pub(crate) fn graft_text_layer(
 }
 
 /// Whether a content stream actually draws any glyphs.
-fn draws_any_text(content: &Content) -> bool {
+pub(crate) fn draws_any_text(content: &Content) -> bool {
     content
         .operations
         .iter()

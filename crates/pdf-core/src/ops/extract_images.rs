@@ -55,8 +55,8 @@ pub fn extract_images(
         let filters = stream.filters().unwrap_or_default();
         let is_jpeg = filters.last().copied() == Some(b"DCTDecode");
 
-        index += 1;
         if is_jpeg {
+            index += 1;
             let path = out_dir.join(format!("{stem}-image-{index}.jpg"));
             std::fs::write(&path, &stream.content).map_err(|source| PdfError::Io {
                 path: path.clone(),
@@ -66,6 +66,7 @@ pub fn extract_images(
         } else {
             match decode_image(&doc.inner, &stream) {
                 Ok(image) => {
+                    index += 1;
                     let path = out_dir.join(format!("{stem}-image-{index}.png"));
                     image.save(&path).map_err(|source| PdfError::Io {
                         path: path.clone(),

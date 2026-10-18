@@ -69,6 +69,17 @@ pub fn is_available() -> bool {
 }
 
 /// Language codes Tesseract has data for.
+pub fn available_languages() -> Result<Vec<String>> {
+    languages()
+}
+
+/// The first installed language, or `eng` if the list is empty.
+pub fn first_available_language() -> Result<String> {
+    let langs = languages()?;
+    Ok(langs.first().cloned().unwrap_or_else(|| "eng".to_string()))
+}
+
+/// Language codes Tesseract has data for.
 pub fn languages() -> Result<Vec<String>> {
     let output = TESSERACT.run(&["--list-langs".to_string()], Duration::from_secs(30))?;
 

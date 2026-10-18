@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use lopdf::Object;
@@ -34,13 +35,38 @@ pub enum SplitSpec {
     ByPages(usize),
 }
 
+/// Options for controlling split output naming and packaging.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SplitOptions {
+    /// Output file name pattern. Supports:
+    /// - `{stem}` — input file stem
+    /// - `{index}` — 1-based chunk index
+    /// - `{width}` — zero-padded width for the chunk count
+    /// - `{pages}` — page range in the chunk (e.g., "1-3")
+    /// - `{index:0{width}d}` — zero-padded index using the chunk count's width
+    ///   Default: `{stem}-{index:0{width}d}.pdf` for burst modes, `{stem}-extract.pdf` for extract.
+    pub output_pattern: Option<String>,
+    /// If true, bundle all output pieces into a single zip archive at `out_dir/{stem}.zip`.
+    pub zip: bool,
+}
+
 /// Split `input` according to `spec`, writing results into `out_dir`.
 ///
 /// Returns the paths written, in order. Output files are named after the input
 /// stem: `report-extract.pdf` for an extraction, `report-001.pdf` and onwards
 /// for a burst.
 pub fn split(input: &Path, spec: &SplitSpec, out_dir: &Path) -> Result<Vec<PathBuf>> {
-    split_with_progress(input, spec, out_dir, None, None)
+    split_with_progress(input, spec, out_dir, None, None, &SplitOptions::default())
+}
+
+/// Split `input` according to `spec`, writing results into `out_dir` with custom options.
+pub fn split_with_options(
+    input: &Path,
+    spec: &SplitSpec,
+    out_dir: &Path,
+    options: &SplitOptions,
+) -> Result<Vec<PathBuf>> {
+    split_with_progress(input, spec, out_dir, None, None, options)
 }
 
 /// The paths [`split`] would write, without writing anything.
@@ -56,7 +82,26 @@ pub fn plan(
 ) -> Result<Vec<PathBuf>> {
     let source_doc = Document::open_with(input, password)?;
     let chunks = chunks(spec, &source_doc)?;
-    Ok(output_paths(input, spec, out_dir, chunks.len()))
+    Ok(output_paths(
+        input,
+        spec,
+        out_dir,
+        &chunks,
+        &SplitOptions::default(),
+    ))
+}
+
+/// The paths [`split_with_options`] would write, without writing anything.
+pub fn plan_with_options(
+    input: &Path,
+    spec: &SplitSpec,
+    out_dir: &Path,
+    password: Option<&str>,
+    options: &SplitOptions,
+) -> Result<Vec<PathBuf>> {
+    let source_doc = Document::open_with(input, password)?;
+    let chunks = chunks(spec, &source_doc)?;
+    Ok(output_paths(input, spec, out_dir, &chunks, options))
 }
 
 /// [`split`], reporting one progress tick per output file written.
@@ -69,14 +114,77 @@ pub fn split_with_progress(
     out_dir: &Path,
     password: Option<&str>,
     mut progress: Option<ProgressFn<'_>>,
+    options: &SplitOptions,
 ) -> Result<Vec<PathBuf>> {
     let source_doc = Document::open_with(input, password)?;
     let chunks = chunks(spec, &source_doc)?;
 
     let total = chunks.len();
-    let paths = output_paths(input, spec, out_dir, total);
+    let paths = output_paths(input, spec, out_dir, &chunks, options);
     let mut written = Vec::with_capacity(total);
 
+    if options.zip {
+        #[cfg(feature = "convert")]
+        {
+            let zip_path = out_dir.join(format!("{}.zip", file_stem(input)));
+            let file = std::fs::File::create(&zip_path).map_err(|source| PdfError::Io {
+                path: zip_path.clone(),
+                source,
+            })?;
+            let mut archive = zip::ZipWriter::new(std::io::BufWriter::new(file));
+            let entry_options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+
+            for (index, (pages, path)) in chunks.into_iter().zip(&paths).enumerate() {
+                if let Some(report) = progress.as_mut() {
+                    report(Progress::new(
+                        index,
+                        Some(total),
+                        format!(
+                            "adding {} to archive",
+                            path.file_name().unwrap().to_string_lossy()
+                        ),
+                    ));
+                }
+
+                let assembled = assemble(vec![Source {
+                    doc: source_doc.inner.clone(),
+                    pages,
+                }])?;
+
+                let mut buf = Vec::new();
+                Document::from_lopdf(assembled, None).save_to(&mut buf)?;
+
+                let entry_name = path.file_name().unwrap().to_string_lossy().into_owned();
+                archive
+                    .start_file(entry_name.clone(), entry_options)
+                    .map_err(|source| {
+                        PdfError::Internal(format!("could not add {}: {}", entry_name, source))
+                    })?;
+                archive.write_all(&buf).map_err(|source| PdfError::Io {
+                    path: zip_path.clone(),
+                    source,
+                })?;
+            }
+
+            archive.finish().map_err(|source| PdfError::Io {
+                path: zip_path.clone(),
+                source: std::io::Error::other(source.to_string()),
+            })?;
+
+            if let Some(report) = progress.as_mut() {
+                report(Progress::new(total, Some(total), "done"));
+            }
+
+            return Ok(vec![zip_path]);
+        }
+        #[cfg(not(feature = "convert"))]
+        {
+            return Err(PdfError::FeatureDisabled("convert"));
+        }
+    }
+
+    // Write individual files
     for (index, (pages, path)) in chunks.into_iter().zip(paths).enumerate() {
         if let Some(report) = progress.as_mut() {
             report(Progress::new(
@@ -86,9 +194,6 @@ pub fn split_with_progress(
             ));
         }
 
-        // Each output needs its own copy of the source: assembly consumes the
-        // document it is given. Cloning is cheaper than parsing, and
-        // decrypting, the file again.
         let assembled = assemble(vec![Source {
             doc: source_doc.inner.clone(),
             pages,
@@ -399,9 +504,36 @@ fn size_chunks(doc: &Document, max_mb: u64) -> Result<Vec<Vec<usize>>> {
 }
 
 /// Derive the output file names for a split of `count` pieces.
-fn output_paths(input: &Path, spec: &SplitSpec, out_dir: &Path, count: usize) -> Vec<PathBuf> {
+fn output_paths(
+    input: &Path,
+    spec: &SplitSpec,
+    out_dir: &Path,
+    chunks: &[Vec<usize>],
+    options: &SplitOptions,
+) -> Vec<PathBuf> {
+    let count = chunks.len();
     let stem = file_stem(input);
     let width = digits(count);
+
+    // If a custom pattern is provided, use it. Handle the more specific
+    // `{index:0{width}d}` token before the generic `{index}` / `{width}`
+    // tokens, since the generic replacement would otherwise mangle it.
+    if let Some(pattern) = &options.output_pattern {
+        return (0..count)
+            .map(|index| {
+                let chunk_index = index + 1;
+                let padded = format!("{:0width$}", chunk_index, width = width);
+                let pages = page_range_string(&chunks[index]);
+                let mut name = pattern.clone();
+                name = name.replace("{index:0{width}d}", &padded);
+                name = name.replace("{stem}", &stem);
+                name = name.replace("{index}", &chunk_index.to_string());
+                name = name.replace("{width}", &width.to_string());
+                name = name.replace("{pages}", &pages);
+                out_dir.join(name)
+            })
+            .collect();
+    }
 
     (0..count)
         .map(|index| {
@@ -420,6 +552,27 @@ fn output_paths(input: &Path, spec: &SplitSpec, out_dir: &Path, count: usize) ->
             out_dir.join(name)
         })
         .collect()
+}
+
+fn page_range_string(pages: &[usize]) -> String {
+    if pages.is_empty() {
+        return String::new();
+    }
+    // Detect a contiguous run.
+    let mut sorted = pages.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    if sorted.windows(2).all(|w| w[1] == w[0] + 1) {
+        if sorted.len() == 1 {
+            return (sorted[0] + 1).to_string();
+        }
+        return format!("{}-{}", sorted[0] + 1, sorted[sorted.len() - 1] + 1);
+    }
+    sorted
+        .iter()
+        .map(|p| (p + 1).to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn file_stem(path: &Path) -> String {

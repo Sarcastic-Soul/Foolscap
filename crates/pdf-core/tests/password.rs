@@ -273,8 +273,15 @@ fn splitting_a_protected_document_writes_plain_pieces() {
     assert!(matches!(error, PdfError::Encrypted(_)), "got {error:?}");
 
     let planned = pdf_core::split_plan(&locked, &spec, &out_dir, Some(USER)).unwrap();
-    let written =
-        pdf_core::split_with_progress(&locked, &spec, &out_dir, Some(USER), None).unwrap();
+    let written = pdf_core::split_with_progress(
+        &locked,
+        &spec,
+        &out_dir,
+        Some(USER),
+        None,
+        &pdf_core::SplitOptions::default(),
+    )
+    .unwrap();
     assert_eq!(planned, written);
     assert_eq!(written.len(), 3);
 

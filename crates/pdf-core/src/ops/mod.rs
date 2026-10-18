@@ -38,7 +38,10 @@ pub use redact::{
 };
 pub use repair::{repair, repair_loaded, repair_with, RepairReport};
 pub use rotate::rotate;
-pub use split::{plan as split_plan, split, split_with_progress, SplitSpec};
+pub use split::{
+    plan as split_plan, plan_with_options as split_plan_with_options, split, split_with_options,
+    split_with_progress, SplitOptions, SplitSpec,
+};
 pub use stamp::{
     anchor_point, estimate_text_width, expand_template, rotation_matrix, stamp,
     stamp_with_progress, Anchor, Point, StampContent, StampFont, StampLayer, StampOptions, Stroke,

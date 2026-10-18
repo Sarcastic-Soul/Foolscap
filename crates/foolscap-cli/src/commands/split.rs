@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{ArgGroup, Parser};
-use pdf_core::{PageRange, SplitSpec};
+use pdf_core::{PageRange, SplitOptions, SplitSpec};
 
 use crate::output::guard_output;
 
@@ -37,6 +37,15 @@ pub struct Args {
     /// Directory to write the results into.
     #[arg(short, long)]
     output: PathBuf,
+
+    /// Output file name pattern. Supports {stem}, {index}, {width}, {pages},
+    /// and {index:0{width}d}.
+    #[arg(long, value_name = "PATTERN")]
+    output_pattern: Option<String>,
+
+    /// Bundle all output pieces into a single zip archive at output/{stem}.zip.
+    #[arg(long)]
+    zip: bool,
 }
 
 pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
@@ -56,9 +65,16 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
         (None, None, false, None, None) => unreachable!("argument group requires a split mode"),
     };
 
+    let options = SplitOptions {
+        output_pattern: args.output_pattern,
+        zip: args.zip,
+    };
+
     // Check every output name before writing any of them, so that a collision
     // on the last piece does not leave the earlier ones already overwritten.
-    for path in pdf_core::split_plan(&args.input, &spec, &args.output, password)? {
+    for path in
+        pdf_core::split_plan_with_options(&args.input, &spec, &args.output, password, &options)?
+    {
         guard_output(&path, force)?;
     }
 
@@ -74,6 +90,7 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
         &args.output,
         password,
         Some(&mut report),
+        &options,
     )?;
 
     for path in &written {

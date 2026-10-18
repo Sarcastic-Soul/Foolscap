@@ -39,11 +39,12 @@ pub use ops::{
     flatten_with_progress, merge, merge_with_progress, move_pages, optimize, redact, redact_find,
     redact_find_with_progress, redact_with_progress, repair, repair_loaded, repair_with,
     reset_crop, rotate, scale_to, scale_to_with_progress, set_mediabox, set_mediabox_with_progress,
-    split, split_plan, split_with_progress, stamp, stamp_with_progress, strip, Anchor,
-    CompressLevel, CompressReport, EncryptOptions, Filter, FilterReport, Fit, FlattenOptions,
-    FlattenReport, Margins, MetadataEdit, OptimizeLevel, OptimizeReport, PageSize, Permissions,
-    Point, Rect, RedactReport, RepairReport, SkipReason, SplitSpec, StampContent, StampFont,
-    StampLayer, StampOptions, StripReport, Stroke,
+    split, split_plan, split_plan_with_options, split_with_options, split_with_progress, stamp,
+    stamp_with_progress, strip, Anchor, CompressLevel, CompressReport, EncryptOptions, Filter,
+    FilterReport, Fit, FlattenOptions, FlattenReport, Margins, MetadataEdit, OptimizeLevel,
+    OptimizeReport, PageSize, Permissions, Point, Rect, RedactReport, RepairReport, SkipReason,
+    SplitOptions, SplitSpec, StampContent, StampFont, StampLayer, StampOptions, StripReport,
+    Stroke,
 };
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};

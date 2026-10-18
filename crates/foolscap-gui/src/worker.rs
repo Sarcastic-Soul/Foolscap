@@ -823,6 +823,7 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                         &directory,
                         None,
                         Some(&mut pump),
+                        &pdf_core::SplitOptions::default(),
                     )?;
                     Ok(format!(
                         "Split into {} file(s) in {}",

@@ -122,6 +122,15 @@ impl Document {
         self.was_encrypted
     }
 
+    /// Write the document to any writer.
+    pub fn save_to<W: std::io::Write>(&mut self, writer: &mut W) -> Result<()> {
+        self.inner.save_to(writer).map_err(|source| PdfError::Io {
+            path: PathBuf::from("in-memory"),
+            source: std::io::Error::other(source.to_string()),
+        })?;
+        Ok(())
+    }
+
     /// Write the document to `path`.
     ///
     /// Overwrites unconditionally; the caller is responsible for asking the

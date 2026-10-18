@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use pdf_core::ocr::{self, OcrOptions, DEFAULT_DPI};
+use pdf_core::ocr::{self, available_languages, first_available_language, OcrOptions, DEFAULT_DPI};
 use pdf_core::render::PageRenderer;
 use pdf_core::PageRange;
 
@@ -16,7 +16,8 @@ pub struct OcrArgs {
     /// The document to make searchable.
     input: PathBuf,
 
-    /// Tesseract language code, or several joined with +, such as eng+deu.
+    /// Tesseract language code, or several joined with +, such as eng+fra+deu.
+    /// Use "auto" to pick the first installed language.
     #[arg(short, long, default_value = "eng")]
     lang: String,
 
@@ -52,10 +53,26 @@ pub fn run(args: OcrArgs, force: bool, password: Option<&str>) -> Result<()> {
         anyhow::bail!("--dpi must be a positive number, got {}", args.dpi);
     }
 
+    // Auto-detect language if requested
+    let language = if args.lang == "auto" {
+        match available_languages() {
+            Ok(langs) if !langs.is_empty() => {
+                eprintln!("Auto-detected languages: {}", langs.join(", "));
+                first_available_language()?
+            }
+            _ => {
+                eprintln!("Warning: could not auto-detect languages, falling back to 'eng'");
+                "eng".to_string()
+            }
+        }
+    } else {
+        args.lang
+    };
+
     guard_output(&args.output, force)?;
 
     let options = OcrOptions {
-        language: args.lang,
+        language,
         dpi: args.dpi,
         skip_pages_with_text: !args.redo,
         password: password.map(str::to_string),

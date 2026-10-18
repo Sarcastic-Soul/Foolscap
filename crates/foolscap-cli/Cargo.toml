@@ -26,6 +26,7 @@ full = ["render", "convert", "ocr"]
 [dev-dependencies]
 clap_complete.workspace = true
 clap_mangen.workspace = true
+tempfile = "3"
 
 [dependencies]
 pdf-core.workspace = true

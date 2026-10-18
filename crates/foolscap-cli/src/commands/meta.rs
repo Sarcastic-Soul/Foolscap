@@ -33,6 +33,12 @@ pub struct Args {
     #[arg(long, conflicts_with = "set_keywords")]
     clear_keywords: bool,
 
+    /// Remove every Info entry (not just the four above), delete XMP Metadata
+    /// streams, and rotate the trailer ID. Cannot be combined with --set-* or
+    /// --clear-*.
+    #[arg(long)]
+    strip_all: bool,
+
     /// Where to write the result.
     #[arg(short, long)]
     output: PathBuf,
@@ -58,12 +64,32 @@ impl Args {
 }
 
 pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
+    guard_output(&args.output, force)?;
+
+    if args.strip_all {
+        let edit = args.edit();
+        if !edit.is_empty() {
+            bail!("--strip-all cannot be combined with --set-* or --clear-*");
+        }
+
+        let mut doc = Document::open_with(&args.input, password)?;
+        let report = pdf_core::strip(&mut doc)?;
+        doc.save(&args.output)?;
+
+        println!(
+            "{} -> {} (removed {} info entries, {} XMP streams, new document ID)",
+            args.input.display(),
+            args.output.display(),
+            report.info_keys_removed,
+            report.xmp_removed,
+        );
+        return Ok(());
+    }
+
     let edit = args.edit();
     if edit.is_empty() {
         bail!("nothing to change; pass at least one --set-* or --clear-* option");
     }
-
-    guard_output(&args.output, force)?;
 
     let mut doc = Document::open_with(&args.input, password)?;
     let updated = edit.apply(&doc.metadata()?);

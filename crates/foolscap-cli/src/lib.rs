@@ -10,7 +10,10 @@ pub mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{arrange, compress, decrypt, info, merge, meta, optimize, rotate, split};
+use commands::{
+    arrange, compress, decrypt, encrypt, flatten, info, merge, meta, optimize, repair, rotate,
+    split, stamp, strip,
+};
 use pdf_core::PdfError;
 
 #[derive(Debug, Parser)]
@@ -62,10 +65,24 @@ pub enum Command {
     Meta(meta::Args),
     /// Write an unencrypted copy of a password-protected document.
     Decrypt(decrypt::Args),
+    /// Protect a document with a password (AES-256).
+    Encrypt(encrypt::Args),
+    /// Repair a damaged or corrupt PDF.
+    Repair(repair::Args),
+    /// Remove identifying metadata: Info entries, XMP, and the document ID.
+    Strip(strip::Args),
+    /// Bake form fields and annotations into the page content.
+    Flatten(flatten::Args),
     /// Losslessly shrink a document.
     Optimize(optimize::Args),
     /// Shrink a document by resampling its images. Lossy.
     Compress(compress::Args),
+    /// Crop pages to a rectangle, resize them, or restore the full page.
+    Crop(commands::crop::Args),
+    /// Recolour embedded images. Vector text is left alone.
+    Filter(commands::filter::Args),
+    /// Cover an area or a found string so it is neither visible nor searchable.
+    Redact(commands::redact::Args),
     /// Rasterise pages to PNG.
     #[cfg(feature = "render")]
     Render(commands::render::RenderArgs),
@@ -84,12 +101,35 @@ pub enum Command {
     /// Convert a PDF into an editable document. Approximate.
     #[cfg(feature = "convert")]
     ToOffice(commands::convert::ToOfficeArgs),
+    /// Typeset a plain-text file as a PDF.
+    #[cfg(feature = "convert")]
+    FromText(commands::convert::FromTextArgs),
+    /// Typeset a Markdown file as a PDF.
+    #[cfg(feature = "convert")]
+    FromMarkdown(commands::convert::FromMarkdownArgs),
+    /// Convert an HTML file into a PDF.
+    #[cfg(feature = "convert")]
+    FromHtml(commands::convert::FromHtmlArgs),
+    /// Convert a PDF into a single HTML file.
+    #[cfg(all(feature = "convert", feature = "render"))]
+    ToHtml(commands::convert::ToHtmlArgs),
+    /// Rasterise pages into one zip archive of images.
+    #[cfg(all(feature = "convert", feature = "render"))]
+    ToZip(commands::to_images::ZipArgs),
     /// Add an invisible text layer so a scan becomes searchable.
     #[cfg(feature = "ocr")]
     Ocr(commands::ocr::OcrArgs),
     /// Read out the text a document already carries. No recognition.
     #[cfg(feature = "ocr")]
     ExtractText(commands::ocr::ExtractTextArgs),
+    /// Draw text or an image over or under pages.
+    Stamp(stamp::StampArgs),
+    /// Draw a large translucent mark, diagonally by default.
+    Watermark(stamp::WatermarkArgs),
+    /// Draw running page numbers.
+    PageNumbers(stamp::PageNumbersArgs),
+    /// Draw a running header and/or footer.
+    HeaderFooter(stamp::HeaderFooterArgs),
     /// Show which optional features this build supports.
     Capabilities,
 }
@@ -109,8 +149,15 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Info(args) => info::run(args, password),
         Command::Meta(args) => meta::run(args, force, password),
         Command::Decrypt(args) => decrypt::run(args, force, password),
+        Command::Encrypt(args) => encrypt::run(args, force, password),
+        Command::Repair(args) => repair::run(args, force),
+        Command::Strip(args) => strip::run(args, force, password),
+        Command::Flatten(args) => flatten::run(args, force, password),
         Command::Optimize(args) => optimize::run(args, force, password),
         Command::Compress(args) => compress::run(args, force, password),
+        Command::Crop(args) => commands::crop::run(args, force, password),
+        Command::Filter(args) => commands::filter::run(args, force, password),
+        Command::Redact(args) => commands::redact::run(args, force, password),
         #[cfg(feature = "render")]
         Command::Render(args) => commands::render::render(args, force, password),
         #[cfg(feature = "render")]
@@ -123,10 +170,24 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::FromOffice(args) => commands::convert::from_office(args, force),
         #[cfg(feature = "convert")]
         Command::ToOffice(args) => commands::convert::to_office(args, force, password),
+        #[cfg(feature = "convert")]
+        Command::FromText(args) => commands::convert::from_text(args, force),
+        #[cfg(feature = "convert")]
+        Command::FromMarkdown(args) => commands::convert::from_markdown(args, force),
+        #[cfg(feature = "convert")]
+        Command::FromHtml(args) => commands::convert::from_html(args, force),
+        #[cfg(all(feature = "convert", feature = "render"))]
+        Command::ToHtml(args) => commands::convert::to_html(args, force, password),
+        #[cfg(all(feature = "convert", feature = "render"))]
+        Command::ToZip(args) => commands::to_images::zip(args, force, password),
         #[cfg(feature = "ocr")]
         Command::Ocr(args) => commands::ocr::run(args, force, password),
         #[cfg(feature = "ocr")]
         Command::ExtractText(args) => commands::ocr::extract_text(args, force, password),
+        Command::Stamp(args) => commands::stamp::stamp(args, force, password),
+        Command::Watermark(args) => commands::stamp::watermark(args, force, password),
+        Command::PageNumbers(args) => commands::stamp::page_numbers(args, force, password),
+        Command::HeaderFooter(args) => commands::stamp::header_footer(args, force, password),
         Command::Capabilities => {
             output::print_capabilities();
             Ok(())

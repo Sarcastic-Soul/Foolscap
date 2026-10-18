@@ -8,19 +8,31 @@ use crate::output::guard_output;
 
 #[derive(Debug, Parser)]
 #[command(group(
-    ArgGroup::new("mode").required(true).args(["pages", "every"])
+    ArgGroup::new("mode").required(true)
 ))]
 pub struct Args {
     /// The document to split.
     input: PathBuf,
 
     /// Pages to extract into a single file, such as 1-3,7 or 9-.
-    #[arg(short, long)]
+    #[arg(short, long, group = "mode")]
     pages: Option<String>,
 
     /// Burst into consecutive chunks of this many pages.
-    #[arg(short, long)]
+    #[arg(short, long, group = "mode")]
     every: Option<usize>,
+
+    /// Split at each top-level bookmark (outline entry).
+    #[arg(long, group = "mode")]
+    bookmarks: bool,
+
+    /// Pack pages greedily into chunks not exceeding this many megabytes.
+    #[arg(long, value_name = "MB", group = "mode")]
+    max_size: Option<u64>,
+
+    /// Burst every N pages (synonym for --every).
+    #[arg(long, value_name = "N", group = "mode")]
+    by_pages: Option<usize>,
 
     /// Directory to write the results into.
     #[arg(short, long)]
@@ -28,11 +40,20 @@ pub struct Args {
 }
 
 pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
-    let spec = match (&args.pages, args.every) {
-        (Some(spec), _) => SplitSpec::Extract(PageRange::parse(spec)?),
-        (None, Some(size)) => SplitSpec::Every(size),
-        // clap's ArgGroup guarantees one of the two is present.
-        (None, None) => unreachable!("argument group requires --pages or --every"),
+    let spec = match (
+        args.pages,
+        args.every,
+        args.bookmarks,
+        args.max_size,
+        args.by_pages,
+    ) {
+        (Some(spec), _, _, _, _) => SplitSpec::Extract(PageRange::parse(&spec)?),
+        (_, Some(size), _, _, _) => SplitSpec::Every(size),
+        (_, _, true, _, _) => SplitSpec::ByBookmarks,
+        (_, _, _, Some(mb), _) => SplitSpec::BySize(mb),
+        (_, _, _, _, Some(n)) => SplitSpec::ByPages(n),
+        // clap's ArgGroup guarantees one of the modes is present.
+        (None, None, false, None, None) => unreachable!("argument group requires a split mode"),
     };
 
     // Check every output name before writing any of them, so that a collision

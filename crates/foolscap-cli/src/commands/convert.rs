@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use pdf_core::convert::{
-    images_to_pdf_with_progress, office_to_pdf, pdf_to_office, Fit, ImagesToPdfOptions,
-    OfficeFormat, PageSize,
+    html_to_pdf, images_to_pdf_with_progress, markdown_file_to_pdf_with_progress, office_to_pdf,
+    pdf_to_office, text_file_to_pdf_with_progress, Fit, ImagesToPdfOptions, OfficeFormat, PageSize,
+    TextToPdfOptions,
 };
 
 use crate::output::guard_output;
@@ -36,6 +37,8 @@ enum Format {
     Docx,
     Odt,
     Rtf,
+    Pptx,
+    Xlsx,
 }
 
 impl From<Format> for OfficeFormat {
@@ -44,6 +47,8 @@ impl From<Format> for OfficeFormat {
             Format::Docx => OfficeFormat::Docx,
             Format::Odt => OfficeFormat::Odt,
             Format::Rtf => OfficeFormat::Rtf,
+            Format::Pptx => OfficeFormat::Pptx,
+            Format::Xlsx => OfficeFormat::Xlsx,
         }
     }
 }
@@ -95,6 +100,71 @@ pub struct ToOfficeArgs {
     format: Format,
 
     /// Where to write the result.
+    #[arg(short, long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct FromTextArgs {
+    /// The plain-text file to convert.
+    input: PathBuf,
+
+    /// Page size for every page.
+    #[arg(long, value_enum, default_value_t = Size::A4)]
+    page_size: Size,
+
+    /// Body text size in points.
+    #[arg(long, default_value_t = pdf_core::convert::DEFAULT_FONT_SIZE)]
+    font_size: f32,
+
+    /// Blank border in points, on all four sides.
+    #[arg(long, default_value_t = pdf_core::convert::DEFAULT_MARGIN)]
+    margin: f32,
+
+    /// Where to write the document.
+    #[arg(short, long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct FromMarkdownArgs {
+    /// The Markdown file to convert.
+    input: PathBuf,
+
+    /// Page size for every page.
+    #[arg(long, value_enum, default_value_t = Size::A4)]
+    page_size: Size,
+
+    /// Body text size in points.
+    #[arg(long, default_value_t = pdf_core::convert::DEFAULT_FONT_SIZE)]
+    font_size: f32,
+
+    /// Blank border in points, on all four sides.
+    #[arg(long, default_value_t = pdf_core::convert::DEFAULT_MARGIN)]
+    margin: f32,
+
+    /// Where to write the document.
+    #[arg(short, long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct FromHtmlArgs {
+    /// The HTML file to convert. Needs LibreOffice installed.
+    input: PathBuf,
+
+    /// Where to write the PDF.
+    #[arg(short, long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+#[cfg(feature = "render")]
+pub struct ToHtmlArgs {
+    /// The PDF to convert.
+    input: PathBuf,
+
+    /// Where to write the HTML file.
     #[arg(short, long)]
     output: PathBuf,
 }
@@ -156,6 +226,78 @@ pub fn to_office(args: ToOfficeArgs, force: bool, password: Option<&str>) -> Res
     let produced = pdf_to_office(&args.input, args.format.into(), scratch.path(), password)?;
     std::fs::rename(&produced, &args.output)
         .or_else(|_| std::fs::copy(&produced, &args.output).map(|_| ()))?;
+
+    println!("{}", args.output.display());
+    Ok(())
+}
+
+fn text_options(page_size: Size, font_size: f32, margin: f32) -> Result<TextToPdfOptions> {
+    if !(font_size.is_finite() && font_size > 0.0) {
+        anyhow::bail!("--font-size must be a positive number, got {font_size}");
+    }
+
+    Ok(TextToPdfOptions {
+        page_size: match page_size {
+            Size::A4 => PageSize::A4,
+            Size::Letter => PageSize::Letter,
+            Size::Legal => PageSize::Legal,
+            Size::Fit => PageSize::FitImage,
+        },
+        font_size,
+        margin,
+        title: None,
+    })
+}
+
+pub fn from_text(args: FromTextArgs, force: bool) -> Result<()> {
+    guard_output(&args.output, force)?;
+
+    let options = text_options(args.page_size, args.font_size, args.margin)?;
+    let mut report = |progress: pdf_core::Progress| tracing::info!("{}", progress.message);
+    text_file_to_pdf_with_progress(&args.input, &args.output, &options, Some(&mut report))?;
+
+    println!("{}", args.output.display());
+    Ok(())
+}
+
+pub fn from_markdown(args: FromMarkdownArgs, force: bool) -> Result<()> {
+    guard_output(&args.output, force)?;
+
+    let options = text_options(args.page_size, args.font_size, args.margin)?;
+    let mut report = |progress: pdf_core::Progress| tracing::info!("{}", progress.message);
+    markdown_file_to_pdf_with_progress(&args.input, &args.output, &options, Some(&mut report))?;
+
+    println!("{}", args.output.display());
+    Ok(())
+}
+
+pub fn from_html(args: FromHtmlArgs, force: bool) -> Result<()> {
+    guard_output(&args.output, force)?;
+
+    // LibreOffice chooses the output name itself, so convert into a scratch
+    // directory beside the target and then move the result into place.
+    let scratch = scratch_beside(&args.output)?;
+    let produced = html_to_pdf(&args.input, scratch.path())?;
+    std::fs::rename(&produced, &args.output)
+        .or_else(|_| std::fs::copy(&produced, &args.output).map(|_| ()))?;
+
+    println!("{}", args.output.display());
+    Ok(())
+}
+
+#[cfg(feature = "render")]
+pub fn to_html(args: ToHtmlArgs, force: bool, password: Option<&str>) -> Result<()> {
+    use pdf_core::convert::{pdf_to_html_with_progress, PdfToHtmlOptions};
+
+    guard_output(&args.output, force)?;
+
+    let options = PdfToHtmlOptions {
+        title: None,
+        password: password.map(str::to_string),
+    };
+
+    let mut report = |progress: pdf_core::Progress| tracing::info!("{}", progress.message);
+    pdf_to_html_with_progress(&args.input, &args.output, &options, Some(&mut report))?;
 
     println!("{}", args.output.display());
     Ok(())

@@ -4,16 +4,24 @@ pub mod arrange;
 pub mod compress;
 #[cfg(feature = "convert")]
 pub mod convert;
+pub mod crop;
 pub mod decrypt;
+pub mod encrypt;
+pub mod filter;
+pub mod flatten;
 pub mod info;
 pub mod merge;
 pub mod meta;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod optimize;
+pub mod redact;
 #[cfg(feature = "render")]
 pub mod render;
+pub mod repair;
 pub mod rotate;
 pub mod split;
+pub mod stamp;
+pub mod strip;
 #[cfg(all(feature = "convert", feature = "render"))]
 pub mod to_images;

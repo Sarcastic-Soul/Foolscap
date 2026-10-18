@@ -19,7 +19,7 @@ the logic, consumed by a CLI now and a GTK4 desktop application later.
 belongs in which stage — read it before adding a feature, and update it when
 scope changes.
 
-Current state: all seven planned stages are built. 274 tests pass and
+Current state: all seven planned stages are built. 467 tests pass and
 `clippy -D warnings` is clean across every feature combination.
 
 ## Commands

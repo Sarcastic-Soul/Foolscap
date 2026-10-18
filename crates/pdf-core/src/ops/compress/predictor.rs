@@ -14,7 +14,7 @@ use lopdf::{Dictionary, Object};
 
 /// Why a predicted stream could not be reversed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PredictorError {
+pub(crate) enum PredictorError {
     /// A predictor number the PDF specification does not define.
     UnknownPredictor(i64),
     /// A row began with a PNG filter type outside 0 to 4.
@@ -27,7 +27,7 @@ pub(super) enum PredictorError {
 
 /// The entries of a `/DecodeParms` dictionary that describe a predictor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct PredictorParams {
+pub(crate) struct PredictorParams {
     pub predictor: i64,
     pub colors: i64,
     pub bits_per_component: i64,
@@ -85,7 +85,7 @@ impl PredictorParams {
 }
 
 /// Reverse whatever predictor `params` names, returning the raw samples.
-pub(super) fn unpredict(
+pub(crate) fn unpredict(
     data: Vec<u8>,
     params: &PredictorParams,
 ) -> Result<Vec<u8>, PredictorError> {
@@ -135,7 +135,7 @@ fn tiff_unpredict(mut data: Vec<u8>, params: &PredictorParams) -> Result<Vec<u8>
 /// component depth; the caller decides whether it can use the result.
 ///
 /// A trailing partial row, which some writers leave behind, is dropped.
-pub(super) fn png_unfilter(
+pub(crate) fn png_unfilter(
     data: &[u8],
     bpp: usize,
     row_bytes: usize,

@@ -31,6 +31,13 @@ pub enum PdfError {
     #[error("wrong password for {0}")]
     WrongPassword(PathBuf),
 
+    /// `encrypt` was called on a document that is already encrypted. A
+    /// [`Document`](crate::document::Document) always holds decrypted content,
+    /// so this only happens when encrypting twice without an intervening save
+    /// and reopen.
+    #[error("document is already encrypted")]
+    AlreadyEncrypted,
+
     /// The document is encrypted with a scheme that cannot be read, such as a
     /// certificate-based security handler.
     #[error("{path} uses encryption Foolscap cannot read: {reason}")]
@@ -55,6 +62,12 @@ pub enum PdfError {
 
     #[error("{0} degrees is not a multiple of 90")]
     InvalidRotation(i32),
+
+    #[error("opacity {0} is outside 0.0..=1.0")]
+    InvalidOpacity(f32),
+
+    #[error("invalid stamp option: {0}")]
+    InvalidStamp(String),
 
     #[error("internal error: {0}")]
     Internal(String),
@@ -83,6 +96,27 @@ pub enum PdfError {
 
     #[error("{0} is not an image Foolscap can read")]
     UnsupportedImage(PathBuf),
+
+    #[error("invalid crop box: {reason}")]
+    InvalidCropBox { reason: String },
+
+    #[error("invalid media box: {reason}")]
+    InvalidMediaBox { reason: String },
+
+    #[error("no match for {0:?}")]
+    TextNotFound(String),
+
+    #[error("the document has an XFA form, which cannot be flattened")]
+    XfaForm,
+
+    #[error("flatten cannot be limited to both forms and annotations at once")]
+    InvalidFlattenOptions,
+
+    #[error("the search text must not be empty")]
+    EmptySearchText,
+
+    #[error("{0:?} is not a filter; expected invert or grayscale")]
+    InvalidFilter(String),
 
     #[error(transparent)]
     Lopdf(#[from] lopdf::Error),

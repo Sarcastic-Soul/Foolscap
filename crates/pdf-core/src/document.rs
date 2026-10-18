@@ -175,6 +175,19 @@ impl Document {
         Ok(())
     }
 
+    /// Encrypt the document in place and write it to `path`.
+    ///
+    /// Overwrites unconditionally; the caller is responsible for asking the
+    /// user first. See [`crate::ops::encrypt`] for the scheme written.
+    pub fn save_encrypted(
+        &mut self,
+        path: impl AsRef<Path>,
+        opts: &crate::ops::EncryptOptions,
+    ) -> Result<()> {
+        crate::ops::encrypt(self, opts)?;
+        self.save(path)
+    }
+
     /// Number of pages in the document.
     pub fn page_count(&self) -> usize {
         self.inner.get_pages().len()

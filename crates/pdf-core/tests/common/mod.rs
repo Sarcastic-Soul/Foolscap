@@ -771,3 +771,153 @@ pub fn build_with_jpeg(
 
     doc
 }
+
+// ---------------------------------------------------------------- annotations
+
+/// The text poppler extracts from a file, or `None` (after saying why) when
+/// poppler-utils is not installed. A second opinion from a reader that is not
+/// the one that wrote the file.
+pub fn pdftotext(path: &Path) -> Option<String> {
+    match std::process::Command::new("pdftotext")
+        .arg(path)
+        .arg("-")
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+        Ok(output) => panic!(
+            "pdftotext failed on {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(_) => {
+            eprintln!("skipping the pdftotext check: poppler-utils is not installed");
+            None
+        }
+    }
+}
+
+/// An appearance stream: a Form XObject with a `BBox` of `width` by `height`
+/// that draws `text` in Helvetica.
+pub fn appearance_stream(
+    doc: &mut Document,
+    width: i64,
+    height: i64,
+    text: &str,
+) -> lopdf::ObjectId {
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+    let content = Content {
+        operations: vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("Td", vec![2.into(), 4.into()]),
+            Operation::new("Tj", vec![Object::string_literal(text)]),
+            Operation::new("ET", vec![]),
+        ],
+    };
+    doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Form",
+            "BBox" => vec![0.into(), 0.into(), width.into(), height.into()],
+            "Resources" => dictionary! {
+                "Font" => dictionary! { "F1" => font_id },
+            },
+        },
+        content.encode().unwrap(),
+    ))
+}
+
+/// How an annotation's `/AP /N` entry is written.
+pub enum Normal {
+    /// No appearance at all.
+    None,
+    /// A single stream drawing this text.
+    Text(&'static str),
+    /// A checkbox: a stream per state, with the named one showing.
+    States {
+        showing: &'static str,
+        on: &'static str,
+        off: &'static str,
+    },
+}
+
+/// Add an annotation to a page (one-indexed) and return its id.
+///
+/// A `Widget` is also listed in the catalog's `/AcroForm /Fields`, which is
+/// created if the document has none.
+pub fn add_annotation(
+    doc: &mut Document,
+    page_number: usize,
+    subtype: &str,
+    rect: [i64; 4],
+    normal: Normal,
+    flags: i64,
+) -> lopdf::ObjectId {
+    let mut annot = dictionary! {
+        "Type" => "Annot",
+        "Subtype" => Object::Name(subtype.as_bytes().to_vec()),
+        "Rect" => rect.iter().map(|n| Object::Integer(*n)).collect::<Vec<_>>(),
+        "F" => flags,
+    };
+    // Every appearance has a 50x20 BBox, so a rectangle of another size makes
+    // the scale that flattening applies visible in the output.
+
+    match normal {
+        Normal::None => {}
+        Normal::Text(text) => {
+            let stream = appearance_stream(doc, 50, 20, text);
+            annot.set("AP", dictionary! { "N" => stream });
+        }
+        Normal::States { showing, on, off } => {
+            let on_stream = appearance_stream(doc, 50, 20, on);
+            let off_stream = appearance_stream(doc, 50, 20, off);
+            annot.set(
+                "AP",
+                dictionary! {
+                    "N" => dictionary! { "Yes" => on_stream, "Off" => off_stream },
+                },
+            );
+            annot.set("AS", Object::Name(showing.as_bytes().to_vec()));
+        }
+    }
+
+    let annot_id = doc.add_object(annot);
+
+    let page_id = doc.get_pages()[&(page_number as u32)];
+    let page = doc.get_dictionary_mut(page_id).unwrap();
+    let mut annots = match page.get(b"Annots") {
+        Ok(Object::Array(existing)) => existing.clone(),
+        _ => Vec::new(),
+    };
+    annots.push(Object::Reference(annot_id));
+    page.set("Annots", Object::Array(annots));
+
+    if subtype == "Widget" {
+        let root = doc
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .unwrap();
+        let catalog = doc.get_dictionary_mut(root).unwrap();
+        let mut form = match catalog.get(b"AcroForm") {
+            Ok(Object::Dictionary(existing)) => existing.clone(),
+            _ => dictionary! { "Fields" => Vec::<Object>::new() },
+        };
+        let mut fields = match form.get(b"Fields") {
+            Ok(Object::Array(existing)) => existing.clone(),
+            _ => Vec::new(),
+        };
+        fields.push(Object::Reference(annot_id));
+        form.set("Fields", Object::Array(fields));
+        form.set("NeedAppearances", false);
+        catalog.set("AcroForm", Object::Dictionary(form));
+    }
+
+    annot_id
+}

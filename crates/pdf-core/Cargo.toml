@@ -15,7 +15,7 @@ default = []
 # and CI stay fast.
 render = ["dep:mupdf"]
 # Enabled in stage 4. Image and Office format conversion.
-convert = ["dep:printpdf"]
+convert = ["dep:printpdf", "dep:zip"]
 # Enabled in stage 5. OCR via the Tesseract binary.
 # Recognition rasterises pages first, so it needs the renderer too.
 ocr = ["render"]
@@ -33,5 +33,6 @@ image = { workspace = true, features = ["jpeg", "png"] }
 flate2.workspace = true
 mupdf = { workspace = true, optional = true }
 printpdf = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true

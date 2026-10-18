@@ -27,6 +27,8 @@ clap_complete = "4"
 printpdf = { version = "0.12", default-features = false, features = ["jpeg", "png"] }
 thiserror = "2"
 tracing = "0.1"
+# MIT-licensed (AGPL-compatible); used to bundle rasterised pages.
+zip = "2"
 
 anyhow = "1"
 # "string" lets the asset generator name subcommand man pages at run time.

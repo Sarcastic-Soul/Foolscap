@@ -367,3 +367,146 @@ mod rendering {
         }
     }
 }
+
+// ------------------------------------------------------- writing encryption
+
+fn encrypt_options() -> pdf_core::EncryptOptions {
+    pdf_core::EncryptOptions {
+        user_password: USER.into(),
+        owner_password: OWNER.into(),
+        ..pdf_core::EncryptOptions::default()
+    }
+}
+
+#[test]
+fn encrypting_writes_aes256_that_needs_the_password() {
+    let workspace = Workspace::new();
+    let input = workspace.document("plain.pdf", 3, "Secret");
+    let out = workspace.join("locked.pdf");
+
+    let mut doc = Document::open(&input).unwrap();
+    doc.save_encrypted(&out, &encrypt_options()).unwrap();
+    // The in-memory document stays usable after encryption.
+    assert_eq!(doc.page_count(), 3);
+
+    assert!(common::declares_encryption(&out));
+
+    let error = Document::open(&out).unwrap_err();
+    assert!(
+        matches!(&error, PdfError::Encrypted(p) if p == &out),
+        "got {error:?}"
+    );
+    let wrong = Document::open_with_password(&out, "not-it").unwrap_err();
+    assert!(
+        matches!(&wrong, PdfError::WrongPassword(p) if p == &out),
+        "got {wrong:?}"
+    );
+
+    for password in [USER, OWNER] {
+        let doc = Document::open_with_password(&out, password).unwrap();
+        assert_eq!(doc.page_count(), 3, "{password}");
+        assert!(doc.was_encrypted(), "{password}");
+    }
+
+    // Content survives the round trip: a decrypted copy reads back verbatim.
+    let plain = workspace.join("roundtrip.pdf");
+    Document::open_with_password(&out, USER)
+        .unwrap()
+        .save(&plain)
+        .unwrap();
+    assert_eq!(common::page_labels(&plain), labels());
+
+    // AES-256 output states its key length, which Poppler needs to decrypt.
+    let raw = lopdf::Document::load(&out).unwrap();
+    let encrypt = raw
+        .trailer
+        .get(b"Encrypt")
+        .and_then(Object::as_reference)
+        .unwrap();
+    let length = raw
+        .get_dictionary(encrypt)
+        .unwrap()
+        .get(b"Length")
+        .and_then(Object::as_i64)
+        .unwrap();
+    assert_eq!(length, 256);
+
+    // Poppler agrees the file is locked: it refuses it without the password
+    // and reads it with the user password.
+    let denied = std::process::Command::new("pdftotext")
+        .arg(&out)
+        .arg("-")
+        .output();
+    match denied {
+        Ok(output) => assert!(
+            !output.status.success(),
+            "poppler opened an encrypted file with no password"
+        ),
+        Err(_) => eprintln!("skipping the poppler encrypt check: poppler-utils is not installed"),
+    }
+    let mut with_password = std::process::Command::new("pdftotext");
+    match with_password
+        .arg("-upw")
+        .arg(USER)
+        .arg(&out)
+        .arg("-")
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(text.contains("Secret 2"), "{text:?}");
+        }
+        Ok(output) => panic!(
+            "pdftotext with the password failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(_) => eprintln!("skipping the poppler encrypt check: poppler-utils is not installed"),
+    }
+}
+
+#[test]
+fn encrypting_twice_without_reopening_is_refused() {
+    let workspace = Workspace::new();
+    let input = workspace.document("plain.pdf", 1, "Page");
+
+    let mut doc = Document::open(&input).unwrap();
+    pdf_core::encrypt(&mut doc, &encrypt_options()).unwrap();
+    let error = pdf_core::encrypt(&mut doc, &encrypt_options()).unwrap_err();
+    assert!(matches!(error, PdfError::AlreadyEncrypted), "got {error:?}");
+}
+
+#[test]
+fn an_owner_only_file_opens_without_asking() {
+    let workspace = Workspace::new();
+    let input = workspace.document("plain.pdf", 1, "Page");
+    let out = workspace.join("restricted.pdf");
+
+    let mut doc = Document::open(&input).unwrap();
+    doc.save_encrypted(
+        &out,
+        &pdf_core::EncryptOptions {
+            owner_password: OWNER.into(),
+            ..pdf_core::EncryptOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert!(common::declares_encryption(&out));
+    let reopened = Document::open(&out).unwrap();
+    assert!(reopened.was_encrypted());
+    assert_eq!(reopened.page_count(), 1);
+}
+
+#[test]
+fn encrypted_metadata_stays_encrypted_by_default() {
+    let workspace = Workspace::new();
+    let input = workspace.document("plain.pdf", 1, "Page");
+    let out = workspace.join("locked.pdf");
+
+    let mut doc = Document::open(&input).unwrap();
+    doc.save_encrypted(&out, &encrypt_options()).unwrap();
+
+    // Page content and strings are ciphertext in the raw bytes.
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(!bytes.windows(8).any(|window| window == b"Secret 1"));
+}

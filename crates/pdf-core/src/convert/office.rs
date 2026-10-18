@@ -29,6 +29,8 @@ pub enum OfficeFormat {
     Docx,
     Odt,
     Rtf,
+    Pptx,
+    Xlsx,
 }
 
 impl OfficeFormat {
@@ -38,6 +40,17 @@ impl OfficeFormat {
             OfficeFormat::Docx => "docx",
             OfficeFormat::Odt => "odt",
             OfficeFormat::Rtf => "rtf",
+            OfficeFormat::Pptx => "pptx",
+            OfficeFormat::Xlsx => "xlsx",
+        }
+    }
+
+    /// The LibreOffice import filter to use when reading a PDF for this format.
+    fn pdf_import_filter(&self) -> &'static str {
+        match self {
+            OfficeFormat::Docx | OfficeFormat::Odt | OfficeFormat::Rtf => "writer_pdf_import",
+            OfficeFormat::Pptx => "impress_pdf_import",
+            OfficeFormat::Xlsx => "calc_pdf_import",
         }
     }
 }
@@ -105,9 +118,14 @@ pub fn pdf_to_office(
 
     // Without an explicit input filter, LibreOffice opens a PDF in Draw, which
     // cannot export any of these formats — it exits zero having written
-    // nothing. Naming the Writer PDF importer is what makes the conversion
-    // possible at all.
-    convert(source, format.as_str(), out_dir, Some("writer_pdf_import"))
+    // nothing. The correct PDF importer depends on the target format:
+    // Writer for docx/odt/rtf, Impress for pptx, Calc for xlsx.
+    convert(
+        source,
+        format.as_str(),
+        out_dir,
+        Some(format.pdf_import_filter()),
+    )
 }
 
 fn convert(
@@ -244,6 +262,8 @@ mod tests {
     fn formats_map_to_their_extensions() {
         assert_eq!(OfficeFormat::Docx.as_str(), "docx");
         assert_eq!(OfficeFormat::Rtf.as_str(), "rtf");
+        assert_eq!(OfficeFormat::Pptx.as_str(), "pptx");
+        assert_eq!(OfficeFormat::Xlsx.as_str(), "xlsx");
     }
 
     #[test]

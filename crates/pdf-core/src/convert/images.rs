@@ -8,48 +8,11 @@ use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObje
 use crate::error::{PdfError, Result};
 use crate::progress::{Progress, ProgressFn};
 
-/// Standard page sizes, in PDF points.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PageSize {
-    A4,
-    Letter,
-    Legal,
-    /// One page per image, exactly the size of that image at `dpi`. Nothing is
-    /// cropped and nothing is letterboxed.
-    FitImage,
-    /// An explicit size in points.
-    Custom {
-        width: f32,
-        height: f32,
-    },
-}
-
-impl PageSize {
-    /// Size in points, or `None` for [`PageSize::FitImage`], which depends on
-    /// the image.
-    pub fn points(&self) -> Option<(f32, f32)> {
-        match *self {
-            PageSize::A4 => Some((595.276, 841.89)),
-            PageSize::Letter => Some((612.0, 792.0)),
-            PageSize::Legal => Some((612.0, 1008.0)),
-            PageSize::FitImage => None,
-            PageSize::Custom { width, height } => Some((width, height)),
-        }
-    }
-}
-
-/// How an image is placed on a page larger or smaller than itself.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Fit {
-    /// Scale to fit entirely within the page, preserving aspect ratio. Leaves
-    /// margins on one axis.
-    #[default]
-    Contain,
-    /// Scale to cover the page, preserving aspect ratio. Crops the overflow.
-    Cover,
-    /// Scale each axis independently to fill the page. Distorts the image.
-    Stretch,
-}
+/// Standard page sizes and fit modes, shared with page scaling.
+///
+/// Canonical definitions live in [`crate::ops::crop`]; this re-export keeps
+/// every path meaning the same thing by `a4`.
+pub use crate::ops::crop::{Fit, PageSize};
 
 /// Options for [`images_to_pdf`].
 #[derive(Debug, Clone, Copy, PartialEq)]

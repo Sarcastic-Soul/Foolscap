@@ -126,6 +126,20 @@ fn output_paths(
     page_count: usize,
     options: &PdfToImagesOptions,
 ) -> Vec<PathBuf> {
+    entry_names(input, selected, page_count, options)
+        .into_iter()
+        .map(|name| out_dir.join(name))
+        .collect()
+}
+
+/// The file names [`pdf_to_images`] and the zip archive share, without any
+/// directory: `{stem}-{page}.{extension}`, zero-padded to the page count.
+pub(crate) fn entry_names(
+    input: &Path,
+    selected: &[usize],
+    page_count: usize,
+    options: &PdfToImagesOptions,
+) -> Vec<String> {
     let stem = input
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
@@ -135,13 +149,7 @@ fn output_paths(
 
     selected
         .iter()
-        .map(|page| {
-            out_dir.join(format!(
-                "{stem}-{:0width$}.{extension}",
-                page + 1,
-                width = width
-            ))
-        })
+        .map(|page| format!("{stem}-{:0width$}.{extension}", page + 1, width = width))
         .collect()
 }
 
@@ -150,18 +158,29 @@ fn write_image(
     path: &Path,
     options: &PdfToImagesOptions,
 ) -> Result<()> {
-    use image::{ExtendedColorType, ImageEncoder};
+    let bytes = encode_image(page, path, options)?;
 
-    let file = std::fs::File::create(path).map_err(|source| PdfError::Io {
+    std::fs::write(path, bytes).map_err(|source| PdfError::Io {
         path: path.to_path_buf(),
         source,
-    })?;
-    let writer = std::io::BufWriter::new(file);
+    })
+}
+
+/// Encode one rendered page for [`pdf_to_images`] or the zip archive, without
+/// touching the filesystem.
+pub(crate) fn encode_image(
+    page: &crate::render::RenderedPage,
+    path: &Path,
+    options: &PdfToImagesOptions,
+) -> Result<Vec<u8>> {
+    use image::{ExtendedColorType, ImageEncoder};
 
     let failed = |reason: String| PdfError::Render {
         path: path.to_path_buf(),
         reason,
     };
+
+    let mut bytes = Vec::new();
 
     match options.format {
         ImageFormat::Png => {
@@ -172,7 +191,7 @@ fn write_image(
                 other => return Err(failed(format!("{other} channels per pixel"))),
             };
 
-            image::codecs::png::PngEncoder::new(writer)
+            image::codecs::png::PngEncoder::new(&mut bytes)
                 .write_image(&page.pixels, page.width, page.height, colour)
                 .map_err(|source| failed(source.to_string()))
         }
@@ -181,11 +200,13 @@ fn write_image(
             // to be flattened first.
             let rgb = flatten_to_rgb(page);
 
-            image::codecs::jpeg::JpegEncoder::new_with_quality(writer, options.quality)
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, options.quality)
                 .write_image(&rgb, page.width, page.height, ExtendedColorType::Rgb8)
                 .map_err(|source| failed(source.to_string()))
         }
-    }
+    }?;
+
+    Ok(bytes)
 }
 
 /// Drop the alpha channel, compositing over white.

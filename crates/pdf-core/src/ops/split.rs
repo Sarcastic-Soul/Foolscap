@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "convert")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -457,18 +458,22 @@ fn size_chunks(doc: &Document, max_mb: u64) -> Result<Vec<Vec<usize>>> {
     let page_count = doc.page_count();
 
     // Estimate size of each page by serializing just that page.
-    // This is approximate but good enough for packing.
-    let mut page_sizes = Vec::with_capacity(page_count);
-    for i in 0..page_count {
-        let mut assembled = assemble(vec![Source {
-            doc: doc.inner.clone(),
-            pages: vec![i],
-        }])?;
-        let mut buf = Vec::new();
-        assembled.save_to(&mut buf).map_err(io_error)?;
-        let size = buf.len() as u64;
-        page_sizes.push(size);
-    }
+    // This is approximate but good enough for packing. Pages are independent,
+    // so the work is spread across threads.
+    use rayon::prelude::*;
+    let page_sizes: Result<Vec<u64>> = (0..page_count)
+        .into_par_iter()
+        .map(|i| {
+            let mut assembled = assemble(vec![Source {
+                doc: doc.inner.clone(),
+                pages: vec![i],
+            }])?;
+            let mut buf = Vec::new();
+            assembled.save_to(&mut buf).map_err(io_error)?;
+            Ok(buf.len() as u64)
+        })
+        .collect();
+    let page_sizes = page_sizes?;
 
     let mut chunks = Vec::new();
     let mut current_chunk = Vec::new();

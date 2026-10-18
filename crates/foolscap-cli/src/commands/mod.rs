@@ -7,6 +7,7 @@ pub mod convert;
 pub mod crop;
 pub mod decrypt;
 pub mod encrypt;
+pub mod extract_images;
 pub mod filter;
 pub mod flatten;
 pub mod info;

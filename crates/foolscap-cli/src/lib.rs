@@ -122,6 +122,8 @@ pub enum Command {
     /// Read out the text a document already carries. No recognition.
     #[cfg(feature = "ocr")]
     ExtractText(commands::ocr::ExtractTextArgs),
+    /// Pull every embedded image out of a PDF.
+    ExtractImages(commands::extract_images::Args),
     /// Draw text or an image over or under pages.
     Stamp(stamp::StampArgs),
     /// Draw a large translucent mark, diagonally by default.
@@ -184,6 +186,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ocr(args) => commands::ocr::run(args, force, password),
         #[cfg(feature = "ocr")]
         Command::ExtractText(args) => commands::ocr::extract_text(args, force, password),
+        Command::ExtractImages(args) => commands::extract_images::run(args, force, password),
         Command::Stamp(args) => commands::stamp::stamp(args, force, password),
         Command::Watermark(args) => commands::stamp::watermark(args, force, password),
         Command::PageNumbers(args) => commands::stamp::page_numbers(args, force, password),

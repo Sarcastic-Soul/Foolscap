@@ -8,6 +8,7 @@ pub mod compress;
 pub(crate) mod contents;
 pub mod crop;
 pub mod encrypt;
+pub mod extract_images;
 pub mod filter;
 pub mod flatten;
 pub(crate) mod image;
@@ -28,6 +29,7 @@ pub use crop::{
     scale_to_with_progress, set_mediabox, set_mediabox_with_progress, Fit, Margins, PageSize, Rect,
 };
 pub use encrypt::{encrypt, EncryptOptions, Permissions};
+pub use extract_images::extract_images;
 pub use filter::{filter, filter_with_progress, Filter, FilterReport};
 pub use flatten::{flatten, flatten_with_progress, FlattenOptions, FlattenReport};
 pub use merge::{merge, merge_with_progress};

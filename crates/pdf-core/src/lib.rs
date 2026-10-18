@@ -35,7 +35,7 @@ pub use error::{PdfError, Result};
 pub use ocr::{ocr, ocr_with_progress, OcrOptions, OcrReport};
 pub use ops::{
     arrange, compress, compress_with_progress, crop, crop_margins, crop_margins_with_progress,
-    crop_with_progress, delete, encrypt, filter, filter_with_progress, flatten,
+    crop_with_progress, delete, encrypt, extract_images, filter, filter_with_progress, flatten,
     flatten_with_progress, merge, merge_with_progress, move_pages, optimize, redact, redact_find,
     redact_find_with_progress, redact_with_progress, repair, repair_loaded, repair_with,
     reset_crop, rotate, scale_to, scale_to_with_progress, set_mediabox, set_mediabox_with_progress,

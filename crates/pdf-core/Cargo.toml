@@ -31,6 +31,7 @@ lopdf.workspace = true
 # written by page rasterisation.
 image = { workspace = true, features = ["jpeg", "png"] }
 flate2.workspace = true
+rayon.workspace = true
 mupdf = { workspace = true, optional = true }
 printpdf = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }

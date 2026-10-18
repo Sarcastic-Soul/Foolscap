@@ -33,6 +33,8 @@ pub use document::{Document, Metadata};
 pub use error::{PdfError, Result};
 #[cfg(feature = "ocr")]
 pub use ocr::{ocr, ocr_with_progress, OcrOptions, OcrReport};
+#[cfg(feature = "render")]
+pub use ops::overlay::overlay;
 pub use ops::{
     arrange, compress, compress_with_progress, crop, crop_margins, crop_margins_with_progress,
     crop_with_progress, delete, encrypt, extract_images, filter, filter_with_progress, flatten,

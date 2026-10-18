@@ -95,6 +95,7 @@ pub struct PageRenderer {
     path: PathBuf,
     page_count: usize,
     cache: RefCell<RenderCache>,
+    cache_dir: Option<PathBuf>,
 }
 
 impl PageRenderer {
@@ -118,15 +119,37 @@ impl PageRenderer {
 
     /// Open a document, using `password` only if the file needs one.
     pub fn open_with(path: impl AsRef<Path>, password: Option<&str>) -> Result<Self> {
-        Self::open_inner(path.as_ref(), password, Self::DEFAULT_CACHE_CAPACITY)
+        Self::open_inner(path.as_ref(), password, Self::DEFAULT_CACHE_CAPACITY, None)
+    }
+
+    /// Open a document with an on-disk thumbnail cache in `cache_dir`.
+    ///
+    /// Rendered pages are stored there keyed by document, page and scale, so
+    /// reopening a large document is close to instant.
+    pub fn open_with_cache_dir(
+        path: impl AsRef<Path>,
+        password: Option<&str>,
+        cache_dir: impl AsRef<Path>,
+    ) -> Result<Self> {
+        Self::open_inner(
+            path.as_ref(),
+            password,
+            Self::DEFAULT_CACHE_CAPACITY,
+            Some(cache_dir.as_ref().to_path_buf()),
+        )
     }
 
     /// Open a document, choosing how many rendered pages to retain.
     pub fn open_with_capacity(path: impl AsRef<Path>, capacity: usize) -> Result<Self> {
-        Self::open_inner(path.as_ref(), None, capacity)
+        Self::open_inner(path.as_ref(), None, capacity, None)
     }
 
-    fn open_inner(path: &Path, password: Option<&str>, capacity: usize) -> Result<Self> {
+    fn open_inner(
+        path: &Path,
+        password: Option<&str>,
+        capacity: usize,
+        cache_dir: Option<PathBuf>,
+    ) -> Result<Self> {
         if !path.exists() {
             return Err(PdfError::NotFound(path.to_path_buf()));
         }
@@ -162,6 +185,7 @@ impl PageRenderer {
             path: path.to_path_buf(),
             page_count,
             cache: RefCell::new(RenderCache::new(capacity)),
+            cache_dir,
         })
     }
 
@@ -190,8 +214,22 @@ impl PageRenderer {
             return Ok(hit);
         }
 
+        // On-disk cache: load a previously rendered page without rasterising.
+        if let Some(dir) = &self.cache_dir {
+            if let Some(hit) = load_disk_cache(dir, &self.path, page, scale.key()) {
+                self.cache.borrow_mut().insert(key, Arc::clone(&hit));
+                tracing::trace!(page, "disk cache hit");
+                return Ok(hit);
+            }
+        }
+
         let rendered = Arc::new(self.draw(page, scale)?);
         self.cache.borrow_mut().insert(key, Arc::clone(&rendered));
+
+        if let Some(dir) = &self.cache_dir {
+            store_disk_cache(dir, &self.path, page, scale.key(), &rendered);
+        }
+
         Ok(rendered)
     }
 
@@ -333,6 +371,56 @@ impl std::fmt::Debug for PageRenderer {
             .field("cache", &self.cache.borrow().stats())
             .finish()
     }
+}
+
+fn disk_cache_path(dir: &Path, source: &Path, page: usize, scale_key: (u8, i64)) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    source.to_string_lossy().hash(&mut hasher);
+    let source_hash = hasher.finish();
+    dir.join(format!(
+        "p{source_hash:x}_{page}_{}_{}.png",
+        scale_key.0, scale_key.1
+    ))
+}
+
+fn load_disk_cache(
+    dir: &Path,
+    source: &Path,
+    page: usize,
+    scale_key: (u8, i64),
+) -> Option<Arc<RenderedPage>> {
+    let path = disk_cache_path(dir, source, page, scale_key);
+    let img = image::open(&path).ok()?;
+    let rgb = img.to_rgb8();
+    Some(Arc::new(RenderedPage {
+        width: rgb.width(),
+        height: rgb.height(),
+        channels: 3,
+        pixels: rgb.into_raw(),
+    }))
+}
+
+fn store_disk_cache(
+    dir: &Path,
+    source: &Path,
+    page: usize,
+    scale_key: (u8, i64),
+    rendered: &RenderedPage,
+) {
+    let path = disk_cache_path(dir, source, page, scale_key);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if rendered.channels != 3 {
+        return;
+    }
+    let img = image::RgbImage::from_raw(rendered.width, rendered.height, rendered.pixels.clone());
+    let Some(img) = img else {
+        return;
+    };
+    let _ = img.save(&path);
 }
 
 fn render_error(path: &Path, source: mupdf::Error) -> PdfError {

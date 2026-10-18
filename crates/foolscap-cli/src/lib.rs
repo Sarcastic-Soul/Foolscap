@@ -89,6 +89,8 @@ pub enum Command {
     /// Write a single small preview image of one page.
     #[cfg(feature = "render")]
     Thumbnail(commands::render::ThumbnailArgs),
+    #[cfg(feature = "render")]
+    Overlay(commands::overlay::Args),
     /// Bind images into a PDF, one page per image.
     #[cfg(feature = "convert")]
     FromImages(commands::convert::FromImagesArgs),
@@ -164,6 +166,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Render(args) => commands::render::render(args, force, password),
         #[cfg(feature = "render")]
         Command::Thumbnail(args) => commands::render::thumbnail(args, force, password),
+        #[cfg(feature = "render")]
+        Command::Overlay(args) => commands::overlay::run(args, force, password),
         #[cfg(feature = "convert")]
         Command::FromImages(args) => commands::convert::from_images(args, force),
         #[cfg(all(feature = "convert", feature = "render"))]

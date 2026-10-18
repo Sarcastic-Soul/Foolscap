@@ -15,6 +15,8 @@ pub(crate) mod image;
 pub mod merge;
 pub mod metadata;
 pub mod optimize;
+#[cfg(feature = "render")]
+pub mod overlay;
 pub mod redact;
 pub mod repair;
 pub mod rotate;
@@ -35,6 +37,8 @@ pub use flatten::{flatten, flatten_with_progress, FlattenOptions, FlattenReport}
 pub use merge::{merge, merge_with_progress};
 pub use metadata::MetadataEdit;
 pub use optimize::{optimize, OptimizeLevel, OptimizeReport};
+#[cfg(feature = "render")]
+pub use overlay::overlay;
 pub use redact::{
     redact, redact_find, redact_find_with_progress, redact_with_progress, RedactReport,
 };

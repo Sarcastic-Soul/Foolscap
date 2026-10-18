@@ -16,13 +16,15 @@ pub struct Args {
     pages: String,
 
     /// Rectangle to cover as x,y,w,h in PDF points, e.g. "72,600,200,24".
-    /// An opaque box is drawn and the page's text runs are stripped so the
-    /// covered words leave no searchable trace.
+    /// An opaque box is drawn, and the text glyphs, image pixels and small
+    /// paths under it are removed from the file, including inside Form
+    /// XObjects.
     #[arg(short, long, conflicts_with = "find")]
     rect: Option<String>,
 
     /// Redact every text run containing this string instead of a rectangle.
-    /// Matching runs are removed wherever they sit; no box is drawn.
+    /// Matching runs are removed wherever they sit, including inside Form
+    /// XObjects; no box is drawn.
     #[arg(long, conflicts_with = "rect")]
     find: Option<String>,
 
@@ -52,6 +54,7 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
             crate::output::count(report.boxes_drawn, "area"),
             crate::output::pages(report.pages_redacted),
         );
+        print_details(&report);
     } else if let Some(needle) = args.find {
         let report =
             pdf_core::ops::redact::redact_find_with_progress(&mut doc, &range, &needle, progress)?;
@@ -61,10 +64,33 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
             crate::output::count(report.runs_removed, "run"),
             crate::output::pages(report.pages_redacted),
         );
+        print_details(&report);
     } else {
         anyhow::bail!("pass one of --rect X,Y,W,H or --find TEXT");
     }
 
     println!("{}", args.output.display());
     Ok(())
+}
+
+/// One line per kind of thing removed, skipping the kinds that were not needed.
+fn print_details(report: &pdf_core::RedactReport) {
+    let details = [
+        (report.runs_removed, "text run removed", "text runs removed"),
+        (report.runs_trimmed, "text run trimmed", "text runs trimmed"),
+        (report.glyphs_removed, "glyph removed", "glyphs removed"),
+        (report.forms_edited, "form edited", "forms edited"),
+        (report.images_blanked, "image blanked", "images blanked"),
+        (
+            report.images_removed,
+            "image removed (could not be edited)",
+            "images removed (could not be edited)",
+        ),
+        (report.paths_removed, "path removed", "paths removed"),
+    ];
+    for (count, one, many) in details {
+        if count > 0 {
+            println!("  {count} {}", if count == 1 { one } else { many });
+        }
+    }
 }

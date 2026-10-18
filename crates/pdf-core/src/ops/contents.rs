@@ -34,6 +34,19 @@ fn set_content_list(doc: &mut lopdf::Document, page_id: ObjectId, list: Vec<Obje
     Ok(())
 }
 
+/// Replace everything the page draws with one new uncompressed stream.
+///
+/// The old streams are only unreferenced, not deleted: a caller that must make
+/// sure the old bytes leave the file has to prune the document afterwards.
+pub(crate) fn replace_content(
+    doc: &mut lopdf::Document,
+    page_id: ObjectId,
+    bytes: Vec<u8>,
+) -> Result<()> {
+    let stream = doc.add_object(Stream::new(Dictionary::new(), bytes));
+    set_content_list(doc, page_id, vec![Object::Reference(stream)])
+}
+
 /// Add `layer` after the page's existing content, so it draws on top.
 pub(crate) fn append_content(
     doc: &mut lopdf::Document,

@@ -150,7 +150,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Meta(args) => meta::run(args, force, password),
         Command::Decrypt(args) => decrypt::run(args, force, password),
         Command::Encrypt(args) => encrypt::run(args, force, password),
-        Command::Repair(args) => repair::run(args, force),
+        Command::Repair(args) => repair::run(args, force, password),
         Command::Strip(args) => strip::run(args, force, password),
         Command::Flatten(args) => flatten::run(args, force, password),
         Command::Optimize(args) => optimize::run(args, force, password),

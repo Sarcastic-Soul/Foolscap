@@ -4,7 +4,7 @@ use std::path::Path;
 
 use lopdf::{Document as LopdfDocument, Object};
 
-use crate::document::Document;
+use crate::document::{load_unlocked, Document};
 use crate::error::{PdfError, Result};
 
 /// Summary of what the repair operation fixed.
@@ -39,8 +39,18 @@ impl RepairReport {
 /// - Corrupt trailer dictionaries
 /// - Orphan objects not reachable from the trailer
 ///
-/// Returns a [`RepairReport`] describing what was fixed.
+/// Returns a [`RepairReport`] describing what was fixed. A file that needs a
+/// password is [`PdfError::Encrypted`]; see [`repair_with`] to give one.
 pub fn repair(input: &Path, out_path: &Path) -> Result<RepairReport> {
+    repair_with(input, out_path, None)
+}
+
+/// [`repair`] for input that may be password protected.
+///
+/// `password` is used only if the file needs one, and ignored otherwise. A
+/// wrong password is [`PdfError::WrongPassword`]. Damage is repaired the same
+/// way either way, and the result is written without encryption.
+pub fn repair_with(input: &Path, out_path: &Path, password: Option<&str>) -> Result<RepairReport> {
     if !input.exists() {
         return Err(PdfError::NotFound(input.to_path_buf()));
     }
@@ -66,23 +76,21 @@ pub fn repair(input: &Path, out_path: &Path) -> Result<RepairReport> {
     // Try the file's own cross-reference table first; scan for objects when
     // that fails or the lengths were patched.
     let mut doc = if force_rebuild {
-        recover_document(&bytes, input, &mut report)?
+        recover_document(&bytes, input, password, &mut report)?
     } else {
-        match LopdfDocument::load_mem(&bytes) {
-            Ok(doc) => rescue_lost_pages(doc, &bytes, input, &mut report),
+        match load_unlocked(input, &bytes, password) {
+            Ok(doc) => rescue_lost_pages(doc, &bytes, input, password, &mut report),
             Err(error) => {
+                // Damage can hide the encryption dictionary as easily as the
+                // page tree, so every failure gets a scan. If the scan fails
+                // too, its error is the one that is reported.
                 tracing::debug!(%error, "initial load failed, scanning for objects");
-                recover_document(&bytes, input, &mut report)?
+                recover_document(&bytes, input, password, &mut report)?
             }
         }
     };
 
-    // A file that needs a password loads as an empty shell; repairing that
-    // would write the shell out.
-    if doc.trailer.get(b"Encrypt").is_ok() {
-        return Err(PdfError::Encrypted(input.to_path_buf()));
-    }
-    // Saved files are whole and plain, so forget how the input was protected.
+    // The document is decrypted by now. Saved files are whole and plain, so forget how the input was protected.
     doc.encryption_state.take();
 
     repair_inner(&mut doc, &mut report);
@@ -135,9 +143,15 @@ fn repair_inner(doc: &mut LopdfDocument, report: &mut RepairReport) {
 /// kept as they are and a new table is appended, so `lopdf` finds the new
 /// `startxref` at the end of the file and loads every object the scan found.
 /// Objects held inside compressed object streams cannot be found this way.
+///
+/// An encrypted file keeps its `/Encrypt` and `/ID` entries in the trailer
+/// that was lost, and without them nothing can be decrypted, so both are
+/// carried over to the new trailer and the file is then unlocked with
+/// `password` as usual.
 fn recover_document(
     bytes: &[u8],
     input: &Path,
+    password: Option<&str>,
     report: &mut RepairReport,
 ) -> Result<LopdfDocument> {
     let malformed = |reason: &str| PdfError::Malformed {
@@ -150,11 +164,14 @@ fn recover_document(
         return Err(malformed("no PDF objects could be found"));
     }
 
-    // An encrypted file cannot be rebuilt without its password, and the
-    // encryption entry would be lost with the old trailer.
-    if find_last(bytes, b"/Encrypt").is_some() {
-        return Err(PdfError::Encrypted(input.to_path_buf()));
-    }
+    let encrypt = if find_key(bytes, b"/Encrypt").is_some() {
+        let id = last_reference(bytes, b"/Encrypt")
+            .filter(|id| found.iter().any(|object| object.id == *id))
+            .ok_or_else(|| malformed("the encryption dictionary could not be found"))?;
+        Some(id)
+    } else {
+        None
+    };
 
     let root = trailer_reference(bytes, b"/Root")
         .filter(|id| found.iter().any(|object| object.id == *id))
@@ -186,12 +203,26 @@ fn recover_document(
     if let Some(info) = info {
         trailer.push_str(&format!(" /Info {} {} R", info.0, info.1));
     }
-    trailer.push_str(&format!(" >>\nstartxref\n{xref_start}\n%%EOF\n"));
-    rebuilt.extend_from_slice(trailer.as_bytes());
+    if let Some(encrypt) = encrypt {
+        trailer.push_str(&format!(" /Encrypt {} {} R", encrypt.0, encrypt.1));
+    }
+    let mut trailer = trailer.into_bytes();
+    if let Some(id) = file_identifier(bytes) {
+        trailer.extend_from_slice(b" /ID ");
+        trailer.extend_from_slice(id);
+    }
+    trailer.extend_from_slice(format!(" >>\nstartxref\n{xref_start}\n%%EOF\n").as_bytes());
+    rebuilt.extend_from_slice(&trailer);
 
-    let doc = LopdfDocument::load_mem(&rebuilt).map_err(|source| PdfError::Malformed {
-        path: input.to_path_buf(),
-        reason: format!("recovery failed: {source}"),
+    let doc = load_unlocked(input, &rebuilt, password).map_err(|error| match error {
+        // Problems with the password are the caller's to fix as they are.
+        PdfError::Encrypted(_)
+        | PdfError::WrongPassword(_)
+        | PdfError::UnsupportedEncryption { .. } => error,
+        other => PdfError::Malformed {
+            path: input.to_path_buf(),
+            reason: format!("recovery failed: {other}"),
+        },
     })?;
 
     report.recovered_objects += found.len();
@@ -213,17 +244,21 @@ fn rescue_lost_pages(
     doc: LopdfDocument,
     bytes: &[u8],
     input: &Path,
+    password: Option<&str>,
     report: &mut RepairReport,
 ) -> LopdfDocument {
+    // Loading an encrypted file drops its encryption dictionary, which is
+    // not a loss.
+    let encrypt = last_reference(bytes, b"/Encrypt");
     let lost = scan_objects(bytes)
         .iter()
-        .any(|object| !doc.objects.contains_key(&object.id));
+        .any(|object| Some(object.id) != encrypt && !doc.objects.contains_key(&object.id));
     if !lost {
         return doc;
     }
 
     let mut rescue_report = RepairReport::default();
-    match recover_document(bytes, input, &mut rescue_report) {
+    match recover_document(bytes, input, password, &mut rescue_report) {
         Ok(rebuilt) if rebuilt.get_pages().len() > doc.get_pages().len() => {
             report.recovered_objects += rescue_report.recovered_objects;
             report.warnings.extend(rescue_report.warnings);
@@ -288,11 +323,14 @@ fn scan_objects(bytes: &[u8]) -> Vec<FoundObject> {
 /// Returns the patched bytes and the number of streams fixed, or `None` when
 /// every length is right (or cannot be judged, as with an indirect length).
 /// The cross-reference table of the result is stale and must be rebuilt.
+///
+/// Encrypted files are handled the same way: a stream's declared length counts
+/// its encrypted bytes, which are what sit between the two keywords.
 fn patch_stream_lengths(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
-    if find_last(bytes, b"/Encrypt").is_some() {
-        return None;
-    }
-
+    // AES data is a whole number of 16-byte blocks. Encrypted bytes can end
+    // in anything, including the line ending that is trimmed off, and the
+    // block size is the one thing that says how much is data.
+    let aes = find_key(bytes, b"/AESV2").is_some() || find_key(bytes, b"/AESV3").is_some();
     // (start of replaced range, end of replaced range, replacement)
     let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
     let mut fixed = 0;
@@ -321,7 +359,15 @@ fn patch_stream_lengths(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
 
         let base = object.offset;
         let (data_end, closing) = match find_from(body, b"endstream", data_start) {
-            Some(marker) => (trim_one_eol(body, data_start, marker), None),
+            Some(marker) => {
+                let end = trim_one_eol(body, data_start, marker);
+                let end = if aes {
+                    whole_blocks_end(body, data_start, marker, end)
+                } else {
+                    end
+                };
+                (end, None)
+            }
             None => {
                 // The file ends mid-stream: close the stream and object.
                 let end = trim_trailing_whitespace_after(body, data_start);
@@ -411,6 +457,24 @@ fn trim_one_eol(body: &[u8], data_start: usize, marker: usize) -> usize {
     end
 }
 
+/// Of the ways to read the line ending before `endstream` (`marker`), the one
+/// that leaves a whole number of AES blocks, when `end` is not already it.
+fn whole_blocks_end(body: &[u8], data_start: usize, marker: usize, end: usize) -> usize {
+    if (end - data_start) % 16 == 0 {
+        return end;
+    }
+    [marker.saturating_sub(1), marker, marker.saturating_sub(2)]
+        .into_iter()
+        .find(|&candidate| {
+            candidate >= data_start
+                && (candidate - data_start) % 16 == 0
+                && body[candidate..marker]
+                    .iter()
+                    .all(|byte| matches!(byte, b'\r' | b'\n'))
+        })
+        .unwrap_or(end)
+}
+
 /// The end of stream data in an object that has no `endstream`: everything up
 /// to a closing `endobj`, if there is one, less trailing whitespace.
 fn trim_trailing_whitespace_after(body: &[u8], data_start: usize) -> usize {
@@ -498,6 +562,85 @@ fn trailer_reference(bytes: &[u8], key: &[u8]) -> Option<lopdf::ObjectId> {
     let next = skip_whitespace(bytes, next)?;
     (bytes.get(next) == Some(&b'R'))
         .then_some((u32::try_from(number).ok()?, u16::try_from(generation).ok()?))
+}
+
+/// Where `key` (a name such as `/Encrypt`) appears as a whole name, last
+/// occurrence first. `/Encrypt` does not match `/EncryptMetadata`.
+fn key_positions(bytes: &[u8], key: &[u8]) -> Vec<usize> {
+    let mut found: Vec<usize> = bytes
+        .windows(key.len())
+        .enumerate()
+        .filter(|(at, window)| {
+            *window == key
+                && bytes
+                    .get(at + key.len())
+                    .is_none_or(|next| next.is_ascii_whitespace() || b"/<>[]()".contains(next))
+        })
+        .map(|(at, _)| at)
+        .collect();
+    found.reverse();
+    found
+}
+
+fn find_key(bytes: &[u8], key: &[u8]) -> Option<usize> {
+    key_positions(bytes, key).into_iter().next()
+}
+
+/// The last indirect reference stored under `key` anywhere in the file: in a
+/// trailer, or in the dictionary of a cross-reference stream.
+fn last_reference(bytes: &[u8], key: &[u8]) -> Option<lopdf::ObjectId> {
+    key_positions(bytes, key).into_iter().find_map(|at| {
+        let (number, next) = parse_number(bytes, skip_optional_whitespace(bytes, at + key.len()))?;
+        let next = skip_whitespace(bytes, next)?;
+        let (generation, next) = parse_number(bytes, next)?;
+        let next = skip_whitespace(bytes, next)?;
+        (bytes.get(next) == Some(&b'R'))
+            .then_some((u32::try_from(number).ok()?, u16::try_from(generation).ok()?))
+    })
+}
+
+/// The text of the last `/ID [<..> <..>]` array in the file, brackets
+/// included, to be copied into a new trailer as it is.
+fn file_identifier(bytes: &[u8]) -> Option<&[u8]> {
+    key_positions(bytes, b"/ID").into_iter().find_map(|at| {
+        let start = skip_optional_whitespace(bytes, at + b"/ID".len());
+        if bytes.get(start) != Some(&b'[') {
+            return None;
+        }
+        let mut position = start + 1;
+        loop {
+            position = skip_optional_whitespace(bytes, position);
+            match bytes.get(position)? {
+                b']' => return Some(&bytes[start..=position]),
+                b'<' | b'(' => position = string_end(bytes, position)?,
+                _ => return None,
+            }
+        }
+    })
+}
+
+/// The index just past the hex or literal string that starts at `start`.
+fn string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes[start] == b'<' {
+        return find_from(bytes, b">", start).map(|end| end + 1);
+    }
+    let mut depth = 0usize;
+    let mut position = start;
+    while position < bytes.len() {
+        match bytes[position] {
+            b'\\' => position += 1,
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(position + 1);
+                }
+            }
+            _ => {}
+        }
+        position += 1;
+    }
+    None
 }
 
 /// Skip zero or more whitespace bytes.

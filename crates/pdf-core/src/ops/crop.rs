@@ -260,6 +260,121 @@ pub fn crop_with_progress(
     Ok(())
 }
 
+/// How much to trim from each edge of a page, in points, as the page looks on
+/// screen: `top` is the top edge of the displayed page even when the page has
+/// `/Rotate` set.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Margins {
+    pub top: f32,
+    pub bottom: f32,
+    pub left: f32,
+    pub right: f32,
+}
+
+impl Margins {
+    /// Check that every margin is a finite number of zero or more.
+    pub fn validate(&self) -> Result<()> {
+        let all = [self.top, self.bottom, self.left, self.right];
+        if all.iter().any(|value| !value.is_finite() || *value < 0.0) {
+            return Err(PdfError::InvalidCropBox {
+                reason: "margins must be zero or more".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Trim `margins` off each edge of `visible`, which is the box the page shows
+/// now and is turned by `rotation` degrees when displayed. `None` when nothing
+/// would be left.
+fn inset(visible: &Rect, rotation: i32, margins: &Margins) -> Option<Rect> {
+    // The margins are named for the displayed page; the box is stored
+    // unrotated. Work out which stored edge each displayed edge is.
+    let (left, bottom, right, top) = match rotation.rem_euclid(360) {
+        90 => (margins.top, margins.left, margins.bottom, margins.right),
+        180 => (margins.right, margins.top, margins.left, margins.bottom),
+        270 => (margins.bottom, margins.right, margins.top, margins.left),
+        _ => (margins.left, margins.bottom, margins.right, margins.top),
+    };
+    let rect = Rect {
+        x0: visible.x0 + left,
+        y0: visible.y0 + bottom,
+        x1: visible.x1 - right,
+        y1: visible.y1 - top,
+    };
+    (rect.x1 > rect.x0 && rect.y1 > rect.y0).then_some(rect)
+}
+
+/// Crop the selected pages by trimming `margins` off each, relative to each
+/// page's own size. Unlike [`crop`], which applies one rectangle everywhere,
+/// pages of different sizes each lose the same amount from their edges.
+///
+/// The margins are taken from the box the page shows now (its `/CropBox`
+/// inside its `/MediaBox`), so cropping twice trims twice. A page the margins
+/// would leave with no area is [`PdfError::InvalidCropBox`], naming the page.
+pub fn crop_margins(doc: &mut Document, pages: &PageRange, margins: Margins) -> Result<()> {
+    crop_margins_with_progress(doc, pages, margins, None)
+}
+
+/// [`crop_margins`], reporting one progress tick per selected page.
+pub fn crop_margins_with_progress(
+    doc: &mut Document,
+    pages: &PageRange,
+    margins: Margins,
+    mut progress: Option<ProgressFn<'_>>,
+) -> Result<()> {
+    margins.validate()?;
+    let selected = pages.resolve_unique(doc.page_count())?;
+    if selected.is_empty() {
+        return Err(PdfError::EmptySelection);
+    }
+
+    materialize_inherited_attributes(&mut doc.inner)?;
+    let page_ids: Vec<ObjectId> = doc.inner.get_pages().into_values().collect();
+    let total = selected.len();
+
+    // Work out every page's new box before writing any, so a page that cannot
+    // take the margins leaves the document untouched.
+    let mut boxes = Vec::with_capacity(total);
+    for (index, position) in selected.iter().enumerate() {
+        if let Some(tick) = progress.as_mut() {
+            tick(Progress::new(
+                index,
+                Some(total),
+                format!("cropping page {}", position + 1),
+            ));
+        }
+        let page_id = page_ids[*position];
+        let media = page_box(&doc.inner, page_id, b"MediaBox")?.ok_or_else(|| {
+            PdfError::InvalidMediaBox {
+                reason: format!("page {} has no /MediaBox", position + 1),
+            }
+        })?;
+        let visible = match page_box(&doc.inner, page_id, b"CropBox")? {
+            Some(crop) => crop.intersect(&media).unwrap_or(media),
+            None => media,
+        };
+        let rotation = page_rotation(&doc.inner, page_id);
+        let rect = inset(&visible, rotation, &margins).ok_or_else(|| PdfError::InvalidCropBox {
+            reason: format!(
+                "the margins leave nothing of page {} ({:.0} x {:.0} points)",
+                position + 1,
+                visible.width(),
+                visible.height()
+            ),
+        })?;
+        boxes.push((page_id, rect));
+    }
+
+    for (page_id, rect) in boxes {
+        doc.inner
+            .get_object_mut(page_id)?
+            .as_dict_mut()?
+            .set("CropBox", box_array(rect));
+    }
+    Ok(())
+}
+
 /// Set `/MediaBox` on the selected pages, clamping any `/CropBox` back inside.
 ///
 /// Both integer and real entries are accepted for the existing boxes.
@@ -654,5 +769,73 @@ mod tests {
         );
         assert!((sx - 0.5).abs() < 0.001);
         assert!((sy - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn margins_follow_the_displayed_page_through_rotation() {
+        let page = Rect {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 600.0,
+            y1: 800.0,
+        };
+        let margins = Margins {
+            top: 10.0,
+            bottom: 20.0,
+            left: 30.0,
+            right: 40.0,
+        };
+        let upright = inset(&page, 0, &margins).unwrap();
+        assert_eq!(
+            (upright.x0, upright.y0, upright.x1, upright.y1),
+            (30.0, 20.0, 560.0, 790.0)
+        );
+
+        // Turned a quarter clockwise, the displayed top is the stored left.
+        let quarter = inset(&page, 90, &margins).unwrap();
+        assert_eq!(
+            (quarter.x0, quarter.y0, quarter.x1, quarter.y1),
+            (10.0, 30.0, 580.0, 760.0)
+        );
+
+        let half = inset(&page, 180, &margins).unwrap();
+        assert_eq!(
+            (half.x0, half.y0, half.x1, half.y1),
+            (40.0, 10.0, 570.0, 780.0)
+        );
+
+        let three = inset(&page, 270, &margins).unwrap();
+        assert_eq!(
+            (three.x0, three.y0, three.x1, three.y1),
+            (20.0, 40.0, 590.0, 770.0)
+        );
+    }
+
+    #[test]
+    fn margins_that_leave_nothing_are_refused() {
+        let page = Rect {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 100.0,
+            y1: 100.0,
+        };
+        let too_wide = Margins {
+            left: 60.0,
+            right: 40.0,
+            ..Margins::default()
+        };
+        assert!(inset(&page, 0, &too_wide).is_none());
+        assert!(Margins {
+            top: -1.0,
+            ..Margins::default()
+        }
+        .validate()
+        .is_err());
+        assert!(Margins {
+            left: f32::NAN,
+            ..Margins::default()
+        }
+        .validate()
+        .is_err());
     }
 }

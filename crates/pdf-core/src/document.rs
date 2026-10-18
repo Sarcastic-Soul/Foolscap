@@ -91,36 +91,7 @@ impl Document {
             source,
         })?;
 
-        // Loading already tries the empty password, and decrypts the document
-        // in place when that works.
-        let mut inner =
-            lopdf::Document::load_mem(&bytes).map_err(|source| map_load_error(path, source))?;
-
-        // When the empty password does not work, lopdf still returns a
-        // document: one holding the encryption dictionary and none of the
-        // content. The trailer entry is the dependable sign that nothing was
-        // decrypted.
-        if is_locked(&inner) {
-            let Some(password) = password else {
-                return Err(PdfError::Encrypted(path.to_path_buf()));
-            };
-
-            // Check the password against the dictionary already in hand before
-            // parsing the file a second time. This also separates a wrong
-            // password from a scheme that cannot be read at all, which the
-            // loader reports identically.
-            inner
-                .authenticate_password(password)
-                .map_err(|source| map_password_error(path, source))?;
-
-            let options = lopdf::LoadOptions::with_password(password);
-            inner = lopdf::Document::load_mem_with_options(&bytes, options)
-                .map_err(|source| map_load_error(path, source))?;
-
-            if is_locked(&inner) {
-                return Err(PdfError::WrongPassword(path.to_path_buf()));
-            }
-        }
+        let mut inner = load_unlocked(path, &bytes, password)?;
 
         // lopdf remembers how the file was encrypted so that an incremental
         // update can be encrypted to match. Foolscap always writes whole files,
@@ -283,6 +254,50 @@ impl Document {
         let id = self.info_dictionary_id()?;
         self.inner.get_dictionary(id).ok()
     }
+}
+
+/// Parse `bytes` with `lopdf`, unlocking the document with `password` if it
+/// needs one.
+///
+/// Loading already tries the empty password and decrypts in place when that
+/// works. A document that is still locked afterwards is [`PdfError::Encrypted`]
+/// when no password is given, and [`PdfError::WrongPassword`] when the one
+/// given does not fit. `path` is only used to name the file in errors.
+pub(crate) fn load_unlocked(
+    path: &Path,
+    bytes: &[u8],
+    password: Option<&str>,
+) -> Result<lopdf::Document> {
+    let mut inner =
+        lopdf::Document::load_mem(bytes).map_err(|source| map_load_error(path, source))?;
+
+    // When the empty password does not work, lopdf still returns a
+    // document: one holding the encryption dictionary and none of the
+    // content. The trailer entry is the dependable sign that nothing was
+    // decrypted.
+    if is_locked(&inner) {
+        let Some(password) = password else {
+            return Err(PdfError::Encrypted(path.to_path_buf()));
+        };
+
+        // Check the password against the dictionary already in hand before
+        // parsing the file a second time. This also separates a wrong
+        // password from a scheme that cannot be read at all, which the
+        // loader reports identically.
+        inner
+            .authenticate_password(password)
+            .map_err(|source| map_password_error(path, source))?;
+
+        let options = lopdf::LoadOptions::with_password(password);
+        inner = lopdf::Document::load_mem_with_options(bytes, options)
+            .map_err(|source| map_load_error(path, source))?;
+
+        if is_locked(&inner) {
+            return Err(PdfError::WrongPassword(path.to_path_buf()));
+        }
+    }
+
+    Ok(inner)
 }
 
 /// Whether lopdf left the document encrypted, having found no password that

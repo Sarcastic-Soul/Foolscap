@@ -36,17 +36,18 @@ pub use ocr::{ocr, ocr_with_progress, OcrOptions, OcrReport};
 #[cfg(feature = "render")]
 pub use ops::overlay::overlay;
 pub use ops::{
-    arrange, compress, compress_with_progress, crop, crop_margins, crop_margins_with_progress,
-    crop_with_progress, delete, encrypt, extract_images, filter, filter_with_progress, flatten,
-    flatten_with_progress, merge, merge_with_progress, move_pages, optimize, redact, redact_find,
-    redact_find_with_progress, redact_with_progress, repair, repair_loaded, repair_with,
-    reset_crop, rotate, scale_to, scale_to_with_progress, set_mediabox, set_mediabox_with_progress,
-    split, split_plan, split_plan_with_options, split_with_options, split_with_progress, stamp,
-    stamp_with_progress, strip, Anchor, CompressLevel, CompressReport, EncryptOptions, Filter,
-    FilterReport, Fit, FlattenOptions, FlattenReport, Margins, MetadataEdit, OptimizeLevel,
-    OptimizeReport, PageSize, Permissions, Point, Rect, RedactReport, RepairReport, SkipReason,
-    SplitOptions, SplitSpec, StampContent, StampFont, StampLayer, StampOptions, StripReport,
-    Stroke,
+    arrange, booklet, booklet_with_progress, compress, compress_with_progress, crop, crop_margins,
+    crop_margins_with_progress, crop_with_progress, delete, encrypt, extract_images, filter,
+    filter_with_progress, flatten, flatten_with_progress, merge, merge_with_progress, move_pages,
+    nup, nup_with_progress, optimize, redact, redact_find, redact_find_with_progress,
+    redact_with_progress, repair, repair_loaded, repair_with, reset_crop, rotate, scale_to,
+    scale_to_with_progress, set_mediabox, set_mediabox_with_progress, split, split_plan,
+    split_plan_with_options, split_with_options, split_with_progress, stamp, stamp_with_progress,
+    strip, Anchor, Binding, BookletOptions, CompressLevel, CompressReport, EncryptOptions, Filter,
+    FilterReport, Fit, FlattenOptions, FlattenReport, Margins, MetadataEdit, NupOptions,
+    OptimizeLevel, OptimizeReport, PageOrder, PageSize, Permissions, Point, Rect, RedactReport,
+    RepairReport, SkipReason, SplitOptions, SplitSpec, StampContent, StampFont, StampLayer,
+    StampOptions, StripReport, Stroke,
 };
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};

@@ -30,9 +30,12 @@ thiserror = "2"
 tracing = "0.1"
 # MIT-licensed (AGPL-compatible); used to bundle rasterised pages.
 zip = "2"
+qrcodegen = "1"
 
 anyhow = "1"
-# "string" lets the asset generator name subcommand man pages at run time.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["clock"] }
 # "env" lets --password be supplied through FOOLSCAP_PASSWORD.
 clap = { version = "4", features = ["derive", "string", "env"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

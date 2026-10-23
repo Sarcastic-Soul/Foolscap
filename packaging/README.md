@@ -110,6 +110,8 @@ binary uses, so they cannot drift from the real flags:
 cargo run -p foolscap-cli --example generate-assets --features full -- dist
 ```
 
+Outputs `dist/man/foolscap.1` plus `foolscap-<subcommand>.1` for each subcommand, and `dist/completions/foolscap.{bash,zsh,fish}`.
+
 ## Making a release
 
 1. Bump `version` under `[workspace.package]` in the top-level `Cargo.toml`,

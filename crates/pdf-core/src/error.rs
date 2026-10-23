@@ -103,6 +103,9 @@ pub enum PdfError {
     #[error("invalid media box: {reason}")]
     InvalidMediaBox { reason: String },
 
+    #[error("invalid QR code: {0}")]
+    InvalidQrCode(String),
+
     #[error("no match for {0:?}")]
     TextNotFound(String),
 

@@ -10,10 +10,16 @@ pub mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+#[cfg(feature = "convert")]
+use commands::convert;
+#[cfg(feature = "ocr")]
+use commands::ocr;
 use commands::{
-    arrange, compress, decrypt, encrypt, flatten, info, merge, meta, optimize, repair, rotate,
-    split, stamp, strip,
+    arrange, booklet, compress, decrypt, encrypt, flatten, info, merge, meta, nup, optimize,
+    repair, rotate, split, stamp, strip,
 };
+#[cfg(feature = "render")]
+use commands::{overlay, render};
 use pdf_core::PdfError;
 
 #[derive(Debug, Parser)]
@@ -83,6 +89,10 @@ pub enum Command {
     Filter(commands::filter::Args),
     /// Cover an area or a found string so it is neither visible nor searchable.
     Redact(commands::redact::Args),
+    /// Place multiple pages per sheet (n-up).
+    Nup(nup::Args),
+    /// Create a booklet for duplex printing and folding.
+    Booklet(booklet::Args),
     /// Rasterise pages to PNG.
     #[cfg(feature = "render")]
     Render(commands::render::RenderArgs),
@@ -162,6 +172,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Crop(args) => commands::crop::run(args, force, password),
         Command::Filter(args) => commands::filter::run(args, force, password),
         Command::Redact(args) => commands::redact::run(args, force, password),
+        Command::Nup(args) => nup::run(args, force, password),
+        Command::Booklet(args) => booklet::run(args, force, password),
         #[cfg(feature = "render")]
         Command::Render(args) => commands::render::render(args, force, password),
         #[cfg(feature = "render")]

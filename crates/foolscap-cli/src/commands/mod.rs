@@ -1,6 +1,7 @@
 //! One module per subcommand. Each exposes an `Args` struct and a `run`.
 
 pub mod arrange;
+pub mod booklet;
 pub mod compress;
 #[cfg(feature = "convert")]
 pub mod convert;
@@ -13,6 +14,7 @@ pub mod flatten;
 pub mod info;
 pub mod merge;
 pub mod meta;
+pub mod nup;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod optimize;

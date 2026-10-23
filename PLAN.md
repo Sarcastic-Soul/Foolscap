@@ -493,3 +493,146 @@ Built after the roadmap above, and covered by the same test and clippy gates.
 The GUI crop dialog takes margins in points, millimetres or inches, per page,
 with a live preview. Every tool dialog and the compare view have been run and
 checked by hand under headless X11.
+
+---
+
+## Stage 8 — Standards & Printing — **planned**
+
+High-value, standards-aligned features that complete the core PDF toolkit for
+professional and archival workflows.
+
+### 8.1 Linearize (Web Optimize)
+**Goal:** Reorder PDF objects for fast web byte-serving (linearization).
+
+- **CLI:** `foolscap linearize in.pdf -o out.pdf` or `foolscap optimize in.pdf --linearize -o out.pdf`
+- **Core:** `lopdf::Document::linearize()` or manual xref/stream reordering
+- **GUI:** Export dialog → "Optimize for Web" checkbox
+- **Acceptance:** A linearized PDF serves page 1 over HTTP range requests without downloading the whole file.
+
+### 8.2 PDF/A-1b/2b/3b Write
+**Goal:** Produce standards-compliant archival PDFs.
+
+- **CLI:** `foolscap to-pdfa in.pdf --level 1b|2b|3b -o out.pdf`
+- **Core:** Embed sRGB ICC profile, set OutputIntent, mark `/Metadata` with XMP, ensure fonts embedded, no encryption, no JS, no external refs.
+- **Dependencies:** Bundle `sRGB.icc` (tiny, CC0) or use system profile.
+- **GUI:** Export dialog → "Save as PDF/A" with level dropdown.
+- **Acceptance:** `verapdf` or Adobe Preflight validates the output.
+
+### 8.3 PDF/A Validation
+**Goal:** Check whether a PDF meets PDF/A conformance.
+
+- **CLI:** `foolscap check-pdfa in.pdf`
+- **Core:** Parse and verify: OutputIntent present, fonts embedded, no prohibited features (encryption, JS, launch actions, external refs, transparency for PDF/A-1), metadata XMP schema.
+- **GUI:** Tools → "Validate PDF/A" with detailed report.
+- **Acceptance:** Correctly passes known-good PDF/A files, fails on non-conforming ones with actionable errors.
+
+### 8.4 Bookmarks / Outlines
+**Goal:** Read, edit, import, export document outline (bookmarks).
+
+- **CLI:**
+  - `foolscap bookmark list in.pdf`
+  - `foolscap bookmark add in.pdf --parent 0 --title "Chapter 1" --page 5 -o out.pdf`
+  - `foolscap bookmark import in.pdf bookmarks.json -o out.pdf`
+  - `foolscap bookmark export in.pdf -o bookmarks.json`
+- **Core:** `lopdf` reads `/Outlines`; need write support for outline tree with `/Dest` or `/A` actions.
+- **GUI:** Sidebar bookmarks panel (click to navigate, drag to reorder, context menu to add/edit/delete).
+- **Acceptance:** Round-trip a bookmarked PDF through export/import; GUI panel stays in sync with edits.
+
+### 8.5 n-up (Pages per Sheet)
+**Goal:** Place multiple source pages onto one output sheet.
+
+- **CLI:** `foolscap nup in.pdf --layout 2x1|2x2|3x2|... --paper a4 -o out.pdf`
+- **Core:** Use `printpdf` to compute layout grid, place each source page as an XObject at calculated position/scale.
+- **Options:** Layout (rows×cols), paper size, margins, gap, border, page order (row-major vs column-major).
+- **GUI:** Export dialog → "Pages per Sheet" with layout preview.
+- **Acceptance:** 4-page A4 → 1-page A4 with 2×2 grid, correct order, readable.
+
+### 8.6 Booklet Imposition
+**Goal:** Reorder pages into signatures for fold-and-staple booklet printing.
+
+- **CLI:** `foolscap booklet in.pdf --paper a4 --signature 4 -o out.pdf`
+- **Core:** Classic imposition algorithm: for N pages, compute signature order (e.g., 8-page sig: 8,1,2,7,6,3,4,5), then n-up 2×1 on target paper.
+- **Options:** Signature size (4, 8, 16), paper size, duplex-aware (short-edge vs long-edge binding).
+- **GUI:** Export dialog → "Create Booklet" with signature size and binding options.
+- **Acceptance:** 16-page A5 content → 4-sheet A4 booklet, prints duplex, folds to correct page order.
+
+### 8.7 Halve Pages
+**Goal:** Cut each page in half (vertical or horizontal), useful for scanned double-page spreads.
+
+- **CLI:** `foolscap halve in.pdf --direction vertical|horizontal -o out.pdf`
+- **Core:** For each page, compute two crop boxes (left/right or top/bottom), duplicate page with each crop.
+- **Options:** Direction, gap between halves (for gutter), swap order.
+- **GUI:** Tools → "Halve Pages" with preview.
+- **Acceptance:** A4 landscape scan of two A5 pages → two A5 portrait pages.
+
+### 8.8 Blank PDF Create
+**Goal:** Generate a new empty PDF with specified page count and size.
+
+- **CLI:** `foolscap create --pages 5 --size a4 -o blank.pdf`
+- **Core:** `printpdf` minimal document with empty pages.
+- **Options:** Page count, page size (standard or custom W×H), output path.
+- **GUI:** Dashboard → "New Document" card; opens empty document ready for stamps, forms, merge.
+- **Acceptance:** `foolscap info blank.pdf` shows 5 A4 pages, zero content.
+
+---
+
+## Stage 9 — Forms & Generation — **planned**
+
+Features that turn Foolscap into a form-filling and programmatic document generation tool.
+
+### 9.1 AcroForm Filling
+**Goal:** Fill interactive PDF form fields from structured data.
+
+- **CLI:** `foolscap fill-form form.pdf --data data.json -o filled.pdf`
+  - `data.json`: `{"field_name": "value", "checkbox_field": true, "choice_field": "Option 2"}`
+  - Support text, checkbox, radio, choice (combo/list), signature fields.
+- **Core:** `lopdf` AcroForm API — update `/V` (value), `/DV` (default), `/AS` (appearance state), set `/NeedAppearances` true so viewers regenerate appearances.
+- **GUI:** Tools → "Fill Form" dialog: loads form, shows fields in a list, user enters values or loads JSON/CSV, preview, save.
+- **Acceptance:** Government/tax PDF forms fill correctly; saved file opens in Adobe Reader with values visible.
+
+### 9.2 QR Code Generator
+**Goal:** Create a PDF containing a QR code (optionally with label).
+
+- **CLI:** `foolscap qr-code "https://example.com" --size 50 --label "Scan me" -o qr.pdf`
+- **Core:** `qrcodegen` crate → SVG/path → `printpdf` place on page.
+- **Options:** Error correction (L/M/Q/H), module size, quiet zone, label text/font, page size.
+- **GUI:** Dashboard → "QR Code" card with live preview.
+- **Acceptance:** Generated QR scans correctly; label renders below code.
+
+### 9.3 PDF to SVG
+**Goal:** Export pages as vector SVG (not rasterized).
+
+- **CLI:** `foolscap to-svg in.pdf --pages 1-3 -o out/`
+- **Core:** `mupdf-rs` exposes `page.to_svg()`; write one `.svg` per page.
+- **Options:** Page range, output directory, font embedding (reference vs subset).
+- **GUI:** Export dialog → "Pages as SVG".
+- **Acceptance:** Text remains selectable in browser; vector paths preserved.
+
+### 9.4 PDF to Markdown
+**Goal:** Extract structured text as Markdown (headings, lists, tables heuristically).
+
+- **CLI:** `foolscap to-markdown in.pdf -o out.md`
+- **Core:** Build on `extract-text` + layout analysis (font size → headings, indentation → lists, grid detection → tables).
+- **Options:** Page range, heading detection threshold, table detection on/off.
+- **GUI:** Export dialog → "As Markdown".
+- **Acceptance:** A structured document (headings, bullets, simple table) produces readable Markdown.
+
+### 9.5 Signature Verification
+**Goal:** Validate digital signatures in a PDF (certificate chain, integrity, timestamp).
+
+- **CLI:** `foolscap verify-signatures in.pdf`
+- **Core:** Parse `/Sig` dictionaries, extract certificates, verify chain to trust anchor, check signed byte ranges match file, validate timestamp (RFC 3161) if present.
+- **Dependencies:** `x509-parser`, `p256`/`rsa`/`sha2` for crypto, `webpki` for trust store.
+- **GUI:** Info dialog → "Signatures" tab with status (Valid/Invalid/Unknown), signer, time, certificate details.
+- **Acceptance:** Correctly validates PAdES-LTV signatures; detects tampering.
+
+---
+
+## Quick Wins (can land anytime, low effort)
+
+| Feature | CLI | Core | GUI |
+|---|---|---|---|
+| **Embed/Extract file attachments** | `attach add/extract` | `/EmbeddedFiles` name tree | Tools → Attachments |
+| **Layer (OCG) visibility** | `layer list/show/hide` | `/OCProperties` | Layers panel |
+| **Page labels** | `page-labels set/get` | `/PageLabels` | Thumbnail tooltip shows label |
+| **Document parts (Article threads)** | `article list` | `/Threads` | — |

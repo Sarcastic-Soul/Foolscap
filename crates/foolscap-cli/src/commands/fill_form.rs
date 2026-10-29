@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use pdf_core::{fill_form, Document, FieldValue};
 
@@ -51,41 +51,6 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
 fn read_data(path: &Path) -> Result<BTreeMap<String, FieldValue>> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("could not read {}", path.display()))?;
-
-    let value: serde_json::Value = serde_json::from_str(&raw)
-        .with_context(|| format!("{} is not valid JSON", path.display()))?;
-
-    let serde_json::Value::Object(map) = value else {
-        bail!(
-            "{} must hold a JSON object of {{\"field name\": value}} pairs",
-            path.display()
-        );
-    };
-
-    let mut data = BTreeMap::new();
-    for (name, value) in map {
-        let value = match value {
-            serde_json::Value::Bool(on) => FieldValue::Checkbox(on),
-            serde_json::Value::String(text) => FieldValue::Text(text),
-            other => bail!(
-                "field \"{name}\": expected a string or a boolean, found {}",
-                json_kind(&other)
-            ),
-        };
-        data.insert(name, value);
-    }
-
+    let data = pdf_core::parse_form_data(&raw).with_context(|| format!("{}", path.display()))?;
     Ok(data)
-}
-
-/// What a JSON value of the wrong kind is called, in a message a person reads.
-fn json_kind(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Number(_) => "a number",
-        serde_json::Value::Array(_) => "an array",
-        serde_json::Value::Object(_) => "an object",
-        // The remaining kinds are the ones already accepted above.
-        serde_json::Value::Bool(_) | serde_json::Value::String(_) => "a valid value",
-    }
 }

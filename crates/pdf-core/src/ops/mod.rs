@@ -51,7 +51,7 @@ pub use encrypt::{encrypt, EncryptOptions, Permissions};
 pub use extract_images::extract_images;
 pub use filter::{filter, filter_with_progress, Filter, FilterReport};
 pub use flatten::{flatten, flatten_with_progress, FlattenOptions, FlattenReport};
-pub use forms::{fill_form, FieldValue, FillFormReport};
+pub use forms::{fill_form, parse_form_data, FieldValue, FillFormReport};
 pub use halve::{halve, HalveDirection, HalveOptions};
 pub use linearize::{is_linearized, linearize, linearize_with_progress};
 pub use merge::{merge, merge_with_progress};

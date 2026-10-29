@@ -106,6 +106,9 @@ pub enum PdfError {
     #[error("invalid QR code: {0}")]
     InvalidQrCode(String),
 
+    #[error("invalid form data: {0}")]
+    InvalidFormData(String),
+
     #[error("no match for {0:?}")]
     TextNotFound(String),
 

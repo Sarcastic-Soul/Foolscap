@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # The GUI is the one place every capability is expected to be present, so it
 # takes pdf-core with everything turned on.
-pdf-core = { workspace = true, features = ["render", "convert", "ocr"] }
+pdf-core = { workspace = true, features = ["render", "convert", "ocr", "signatures"] }
 
 anyhow.workspace = true
 async-channel.workspace = true

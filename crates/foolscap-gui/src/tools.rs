@@ -31,6 +31,19 @@ pub enum ToolId {
     Redact,
     Flatten,
     Sign,
+    Linearize,
+    PdfA,
+    CheckPdfA,
+    Bookmarks,
+    NUp,
+    Booklet,
+    Halve,
+    FillForm,
+    VerifySignatures,
+    NewBlank,
+    QrCode,
+    ToSvg,
+    ToMarkdown,
 }
 
 impl ToolId {
@@ -56,6 +69,19 @@ impl ToolId {
             ToolId::Redact => "redact",
             ToolId::Flatten => "flatten",
             ToolId::Sign => "sign",
+            ToolId::Linearize => "linearize",
+            ToolId::PdfA => "pdfa",
+            ToolId::CheckPdfA => "check-pdfa",
+            ToolId::Bookmarks => "bookmarks",
+            ToolId::NUp => "n-up",
+            ToolId::Booklet => "booklet",
+            ToolId::Halve => "halve",
+            ToolId::FillForm => "fill-form",
+            ToolId::VerifySignatures => "verify-signatures",
+            ToolId::NewBlank => "new-blank",
+            ToolId::QrCode => "qr-code",
+            ToolId::ToSvg => "to-svg",
+            ToolId::ToMarkdown => "to-markdown",
         }
     }
 }
@@ -74,6 +100,8 @@ pub struct Needs {
     pub ocr: bool,
     /// LibreOffice on `PATH`.
     pub office: bool,
+    /// Signature verification (the `signatures` feature).
+    pub signatures: bool,
 }
 
 impl Needs {
@@ -83,6 +111,7 @@ impl Needs {
         convert: false,
         ocr: false,
         office: false,
+        signatures: false,
     };
 
     /// Reads the open document.
@@ -109,6 +138,13 @@ impl Needs {
 
     const fn ocr(self) -> Self {
         Needs { ocr: true, ..self }
+    }
+
+    const fn signatures(self) -> Self {
+        Needs {
+            signatures: true,
+            ..self
+        }
     }
 
     /// LibreOffice also means the `convert` feature, which wraps it.
@@ -138,6 +174,7 @@ impl Tool {
         (!self.needs.render || caps.render)
             && (!self.needs.convert || caps.convert)
             && (!self.needs.ocr || caps.ocr)
+            && (!self.needs.signatures || caps.signatures)
     }
 
     /// Whether the card is clickable right now.
@@ -314,6 +351,97 @@ pub const TOOLS: &[Tool] = &[
         "document-edit-symbolic",
         Needs::NONE.document(),
     ),
+    tool(
+        ToolId::Linearize,
+        "Optimize for web",
+        "Fast first page over HTTP",
+        "network-server-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::PdfA,
+        "Archival PDF/A",
+        "Save as PDF/A-1b, 2b or 3b",
+        "drive-harddisk-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::CheckPdfA,
+        "Check PDF/A",
+        "Structural conformance report",
+        "emblem-ok-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::Bookmarks,
+        "Bookmarks",
+        "Add an outline entry",
+        "bookmark-new-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::NUp,
+        "Pages per sheet",
+        "Several pages on one sheet",
+        "view-grid-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::Booklet,
+        "Booklet",
+        "Reorder for folding",
+        "view-paged-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::Halve,
+        "Halve pages",
+        "Cut each page in two",
+        "object-flip-horizontal-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::FillForm,
+        "Fill form",
+        "Values from a JSON file",
+        "document-edit-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::VerifySignatures,
+        "Verify signatures",
+        "Integrity and trust report",
+        "security-high-symbolic",
+        Needs::NONE.document().signatures(),
+    ),
+    tool(
+        ToolId::NewBlank,
+        "New blank PDF",
+        "Empty pages of a set size",
+        "document-new-symbolic",
+        Needs::NONE,
+    ),
+    tool(
+        ToolId::QrCode,
+        "QR code",
+        "A scannable code as PDF",
+        "view-grid-symbolic",
+        Needs::NONE.convert(),
+    ),
+    tool(
+        ToolId::ToSvg,
+        "Pages as SVG",
+        "Vector files, one per page",
+        "image-x-generic-symbolic",
+        Needs::NONE.document().render(),
+    ),
+    tool(
+        ToolId::ToMarkdown,
+        "Export Markdown",
+        "Structured text out",
+        "text-x-generic-symbolic",
+        Needs::NONE.document().render(),
+    ),
 ];
 
 /// Find a tool by its window action name.
@@ -370,6 +498,19 @@ mod tests {
             ToolId::Redact,
             ToolId::Flatten,
             ToolId::Sign,
+            ToolId::Linearize,
+            ToolId::PdfA,
+            ToolId::CheckPdfA,
+            ToolId::Bookmarks,
+            ToolId::NUp,
+            ToolId::Booklet,
+            ToolId::Halve,
+            ToolId::FillForm,
+            ToolId::VerifySignatures,
+            ToolId::NewBlank,
+            ToolId::QrCode,
+            ToolId::ToSvg,
+            ToolId::ToMarkdown,
         ] {
             assert!(ids.contains(&required), "missing {required:?}");
         }

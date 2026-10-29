@@ -906,6 +906,19 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("redact", |app| app.redact()),
         ("flatten", |app| app.flatten()),
         ("sign", |app| app.sign()),
+        ("linearize", |app| app.linearize()),
+        ("pdfa", |app| app.pdf_a()),
+        ("check-pdfa", |app| app.check_pdf_a()),
+        ("bookmarks", |app| app.bookmarks()),
+        ("n-up", |app| app.n_up()),
+        ("booklet", |app| app.booklet()),
+        ("halve", |app| app.halve()),
+        ("fill-form", |app| app.fill_form()),
+        ("verify-signatures", |app| app.verify_signatures()),
+        ("new-blank", |app| app.new_blank()),
+        ("qr-code", |app| app.qr_code()),
+        ("to-svg", |app| app.to_svg()),
+        ("to-markdown", |app| app.to_markdown()),
         // The compare view.
         ("compare-open-left", |app| {
             app.choose_file_for_compare(ComparisonSide::Left)
@@ -923,6 +936,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         }),
     ]
 }
+
+mod stage8;
 
 fn add_actions(app: &Rc<App>) {
     for (name, handler) in handlers() {
@@ -1260,6 +1275,9 @@ impl App {
                 self.paint_compare();
             }
 
+            Response::Report { title, body } => {
+                stage8::show_report(&self.ui.window, &title, &body);
+            }
             Response::Progress(message) => {
                 self.ui.progress.set_visible(true);
                 // A determinate fraction arrives on JobProgress; the string
@@ -4502,6 +4520,15 @@ fn explain(task: Task, error: &PdfError) -> (String, String) {
         Task::ToOffice => "Could not convert to office format",
         Task::FromText => "Could not create PDF from text",
         Task::FromMarkdown => "Could not create PDF from Markdown",
+        Task::Archive => "Could not make the archival or web copy",
+        Task::Layout => "Could not lay out the pages",
+        Task::Bookmark => "Could not add the bookmark",
+        Task::FillForm => "Could not fill the form",
+        Task::Create => "Could not create the document",
+        Task::QrCode => "Could not create the QR code",
+        Task::Inspect => "Could not check the document",
+        Task::ExportMarkdown => "Could not export Markdown",
+        Task::ExportSvg => "Could not export SVG",
     }
     .to_string();
 

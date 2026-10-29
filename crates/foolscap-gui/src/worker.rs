@@ -25,6 +25,8 @@ use pdf_core::{
 const MIN_VIEW_DPI: f32 = 18.0;
 const MAX_VIEW_DPI: f32 = 600.0;
 
+pub(crate) mod stage8;
+
 /// Work the user interface asks for.
 ///
 /// Long operations carry a `job_id` from the batch queue so progress and
@@ -119,6 +121,37 @@ pub enum Request {
         options: FlattenOptions,
         pages: PageRange,
         edits: Edits,
+        job_id: u64,
+    },
+    /// Change the open document with one of the later tools and write the
+    /// result to `path`.
+    Transform {
+        path: PathBuf,
+        transform: stage8::Transform,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Make a new document at `path`.
+    Create {
+        path: PathBuf,
+        creation: stage8::Creation,
+        job_id: u64,
+    },
+    /// Read the open document and report on it.
+    Inspect {
+        which: stage8::Inspection,
+        job_id: u64,
+    },
+    /// Write the open document's text as Markdown to `path`.
+    ExportMarkdown {
+        path: PathBuf,
+        edits: Edits,
+        job_id: u64,
+    },
+    /// Write one SVG per selected page of the saved file into `out_dir`.
+    ExportSvg {
+        out_dir: PathBuf,
+        pages: PageRange,
         job_id: u64,
     },
     /// Write an AES-256 protected copy.
@@ -239,7 +272,12 @@ impl Request {
             | Request::FromOffice { job_id, .. }
             | Request::ToOffice { job_id, .. }
             | Request::FromText { job_id, .. }
-            | Request::FromMarkdown { job_id, .. } => Some(*job_id),
+            | Request::FromMarkdown { job_id, .. }
+            | Request::Transform { job_id, .. }
+            | Request::Create { job_id, .. }
+            | Request::Inspect { job_id, .. }
+            | Request::ExportMarkdown { job_id, .. }
+            | Request::ExportSvg { job_id, .. } => Some(*job_id),
             Request::Open { .. }
             | Request::Render { .. }
             | Request::Save { .. }
@@ -303,6 +341,16 @@ pub enum Task {
     ToOffice,
     FromText,
     FromMarkdown,
+    /// Transforms that lay pages out or restructure the file.
+    Archive,
+    Layout,
+    Bookmark,
+    FillForm,
+    Create,
+    QrCode,
+    Inspect,
+    ExportMarkdown,
+    ExportSvg,
 }
 
 /// The pending changes to apply before writing anything out.
@@ -355,6 +403,11 @@ pub enum Response {
         dpi: f32,
         image: Arc<RenderedPage>,
         slot: RenderSlot,
+    },
+    /// A multi-line result that belongs in a dialog rather than the status bar.
+    Report {
+        title: String,
+        body: String,
     },
     Progress(String),
     /// The open file is about to be overwritten, so pages are now read from a
@@ -1089,6 +1142,119 @@ fn run(requests: mpsc::Receiver<Request>, responses: async_channel::Sender<Respo
                 match result {
                     Ok(message) => done(message),
                     Err(error) => fail(Task::Flatten, error),
+                }
+            }
+
+            Request::Transform {
+                path,
+                transform,
+                edits,
+                job_id: _,
+            } => {
+                let task = transform.task();
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let staged = stage(&source, &passwords, &edits)?;
+                    let unprotected = staged.document.was_encrypted();
+
+                    let mut pump = pump;
+                    let (mut document, summary) =
+                        stage8::apply(staged.document, &transform, &mut pump)?;
+                    save_atomically(&mut document, &path)?;
+                    Ok(format!(
+                        "{summary}; saved to {}{}",
+                        path.display(),
+                        unprotected_note(unprotected)
+                    ))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(task, error),
+                }
+            }
+
+            Request::Create {
+                path,
+                creation,
+                job_id: _,
+            } => {
+                let task = creation.task();
+                let result = (|| -> pdf_core::Result<String> {
+                    protect_source(
+                        &mut primary_renderer,
+                        &mut copies,
+                        &mut passwords,
+                        &path,
+                        &say,
+                    )?;
+                    let mut document = stage8::create(&creation)?;
+                    save_atomically(&mut document, &path)?;
+                    Ok(format!("Made {}", path.display()))
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(task, error),
+                }
+            }
+
+            Request::Inspect { which, job_id: _ } => {
+                let result = (|| -> pdf_core::Result<stage8::Inspected> {
+                    let source = current_source(&primary_renderer)?;
+                    stage8::inspect(&source, passwords.get(&source), which)
+                })();
+
+                match result {
+                    Ok(inspected) => {
+                        say(Response::Report {
+                            title: inspected.title,
+                            body: inspected.body,
+                        });
+                        done(inspected.summary)
+                    }
+                    Err(error) => fail(Task::Inspect, error),
+                }
+            }
+
+            Request::ExportMarkdown {
+                path,
+                edits,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = current_source(&primary_renderer)?;
+                    let staged = stage(&source, &passwords, &edits)?;
+                    stage8::export_markdown(&staged.document, &path)
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::ExportMarkdown, error),
+                }
+            }
+
+            Request::ExportSvg {
+                out_dir,
+                pages,
+                job_id: _,
+            } => {
+                let result = (|| -> pdf_core::Result<String> {
+                    let source = current_source(&primary_renderer)?;
+                    let password = passwords.get(&source);
+                    let mut pump = pump;
+                    stage8::export_svg(&source, password, &out_dir, pages, &mut pump)
+                })();
+
+                match result {
+                    Ok(message) => done(message),
+                    Err(error) => fail(Task::ExportSvg, error),
                 }
             }
 

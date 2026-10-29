@@ -43,7 +43,7 @@ pub use ops::{
     encrypt, export_bookmarks, extract_images, fill_form, filter, filter_with_progress, flatten,
     flatten_with_progress, halve, import_bookmarks, is_linearized, linearize,
     linearize_with_progress, list_bookmarks, merge, merge_with_progress, move_pages, nup,
-    nup_with_progress, optimize, redact, redact_find, redact_find_with_progress,
+    nup_with_progress, optimize, parse_form_data, redact, redact_find, redact_find_with_progress,
     redact_with_progress, repair, repair_loaded, repair_with, reset_crop, rotate, scale_to,
     scale_to_with_progress, set_mediabox, set_mediabox_with_progress, split, split_plan,
     split_plan_with_options, split_with_options, split_with_progress, stamp, stamp_with_progress,

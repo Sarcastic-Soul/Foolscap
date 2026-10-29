@@ -30,7 +30,7 @@ use crate::text;
 
 /// The value to write into a field. A JSON boolean addresses a checkbox or
 /// radio field; a string covers text and choice fields.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FieldValue {
     Checkbox(bool),
@@ -85,6 +85,50 @@ struct FormField {
     /// Widgets with a single `/AP /N` stream (text fields) have no states and
     /// no `/AS` to set, and appear here as an empty list.
     widgets: Vec<(ObjectId, Vec<Vec<u8>>)>,
+}
+
+/// Read the JSON that the `fill-form` command and the GUI take: an object of
+/// `"field name": value` pairs. A boolean fills a checkbox and a string fills a
+/// text or choice field.
+///
+/// Any other value is refused by naming the field that carries it. An untagged
+/// enum would otherwise fail with a generic "no variant matched" message.
+pub fn parse_form_data(json: &str) -> Result<BTreeMap<String, FieldValue>> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|error| PdfError::InvalidFormData(format!("not valid JSON: {error}")))?;
+
+    let serde_json::Value::Object(map) = value else {
+        return Err(PdfError::InvalidFormData(
+            "the data must be a JSON object of \"field name\": value pairs".into(),
+        ));
+    };
+
+    let mut data = BTreeMap::new();
+    for (name, value) in map {
+        let value = match value {
+            serde_json::Value::Bool(on) => FieldValue::Checkbox(on),
+            serde_json::Value::String(text) => FieldValue::Text(text),
+            other => {
+                return Err(PdfError::InvalidFormData(format!(
+                    "field \"{name}\": expected a string or a boolean, found {}",
+                    json_kind(&other)
+                )))
+            }
+        };
+        data.insert(name, value);
+    }
+    Ok(data)
+}
+
+/// What a JSON value of the wrong kind is called, in a message a person reads.
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+        serde_json::Value::Bool(_) | serde_json::Value::String(_) => "a valid value",
+    }
 }
 
 /// Write `data` into the document's form fields, setting `/V` and marking

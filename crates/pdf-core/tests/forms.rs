@@ -743,3 +743,24 @@ fn a_document_without_a_form_reports_every_name_not_found() {
     assert_eq!(report.filled, Vec::<String>::new());
     assert_eq!(report.not_found, ["name"]);
 }
+
+#[test]
+fn form_data_maps_booleans_to_checkboxes_and_strings_to_text() {
+    let data = pdf_core::parse_form_data(r#"{"agree": true, "name": "Ada"}"#).unwrap();
+    assert_eq!(data["agree"], pdf_core::FieldValue::Checkbox(true));
+    assert_eq!(data["name"], pdf_core::FieldValue::Text("Ada".into()));
+}
+
+#[test]
+fn form_data_names_the_field_with_a_wrong_value() {
+    let error = pdf_core::parse_form_data(r#"{"age": 42}"#).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("\"age\""), "{message}");
+    assert!(message.contains("a number"), "{message}");
+}
+
+#[test]
+fn form_data_must_be_an_object_and_valid_json() {
+    assert!(pdf_core::parse_form_data("[1, 2]").is_err());
+    assert!(pdf_core::parse_form_data("{not json").is_err());
+}

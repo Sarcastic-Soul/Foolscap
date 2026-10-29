@@ -16,6 +16,29 @@ foolscap-gui report.pdf
 
 See [PLAN.md](PLAN.md) for the build history and future ideas.
 
+## Screenshots
+
+The dashboard puts every operation on one card:
+
+![Foolscap dashboard with its tool cards](docs/images/dashboard.png)
+
+Tools that need input open a short dialog. Here, the Bookmarks dialog adds, removes or moves an outline entry:
+
+![The Bookmarks dialog](docs/images/bookmarks-dialog.png)
+
+## At a glance
+
+| | |
+|---|---|
+| Rust source | about 48,000 lines across three crates |
+| Tests | 700 with every optional feature on, 399 with defaults |
+| CLI subcommands | 54 |
+| Dashboard tools | 37 cards |
+| Git history | 36 commits on `main` |
+| Licence | AGPL-3.0-or-later |
+
+Counts are taken from the repository at the time of writing. The tests run on every push in GitHub Actions.
+
 ---
 
 ## Install
@@ -143,6 +166,26 @@ Every command reads password-protected input when given `--password`, or the pas
 | `thumbnail` | Write a single small preview image of one page. |
 | `overlay` | Draw one PDF over another (e.g., letterhead). |
 | `extract-images` | Pull every embedded image out of a PDF. |
+
+### Later additions
+
+| Command | Description |
+|---|---|
+| `linearize` | Reorder objects so the first page loads over HTTP without the rest. |
+| `to-pdfa` | Convert to PDF/A-1b, 2b or 3b, with an embedded sRGB profile. |
+| `check-pdfa` | Check the structural PDF/A rules Foolscap enforces. Not a veraPDF validation. |
+| `bookmark` | List, add, remove, move, import or export the outline. |
+| `halve` | Cut each page into two halves, vertically or horizontally. |
+| `create` | Make a blank document of a chosen page count and size. |
+| `fill-form` | Fill AcroForm fields from a JSON file of `"name": value` pairs. |
+| `verify-signatures` | Check digital signatures for integrity and for a chain to a system root. |
+| `qr-code` | Make a one-page PDF holding a QR code. |
+| `to-svg` | Export pages as vector SVG. Text is drawn as paths, so it is not selectable. |
+| `to-markdown` | Extract the text as Markdown. |
+| `attachments` | List, add or extract embedded files. |
+| `layers` | List optional content layers, and show or hide one. |
+| `page-labels` | Read or set page labels, such as roman numerals before arabic. |
+| `articles` | List article threads. |
 
 ### Conversion (`convert` feature)
 

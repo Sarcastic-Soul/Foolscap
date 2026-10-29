@@ -21,6 +21,10 @@ convert = ["dep:printpdf", "dep:zip", "dep:qrcodegen"]
 ocr = ["render"]
 # Rendering plus conversion enables PDF-to-image output.
 render-convert = ["render", "convert"]
+# Digital signature verification: parsing, byte-range integrity, certificate
+# details. Chain-of-trust validation against a system trust store is out of
+# scope; the report says what was and was not checked.
+signatures = ["dep:x509-parser", "dep:sha1", "dep:sha2", "dep:rsa", "dep:p256"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -42,3 +46,8 @@ tracing.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
+x509-parser = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }

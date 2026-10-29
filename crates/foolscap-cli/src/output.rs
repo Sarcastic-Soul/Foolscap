@@ -60,6 +60,7 @@ pub fn print_capabilities() {
     println!("render     {}", mark(caps.render));
     println!("convert    {}", mark(caps.convert));
     println!("ocr        {}", mark(caps.ocr));
+    println!("signatures {}", mark(caps.signatures));
 
     // Compiled in is not the same as usable: both of these shell out, and a
     // build with the feature on but the tool absent can do nothing. Say so here

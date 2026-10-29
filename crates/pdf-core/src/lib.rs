@@ -35,20 +35,29 @@ pub use error::{PdfError, Result};
 pub use ocr::{ocr, ocr_with_progress, OcrOptions, OcrReport};
 #[cfg(feature = "render")]
 pub use ops::overlay::overlay;
+#[cfg(feature = "render")]
+pub use ops::to_markdown::{to_markdown, MarkdownOptions};
 pub use ops::{
-    arrange, booklet, booklet_with_progress, compress, compress_with_progress, crop, crop_margins,
-    crop_margins_with_progress, crop_with_progress, delete, encrypt, extract_images, filter,
-    filter_with_progress, flatten, flatten_with_progress, merge, merge_with_progress, move_pages,
-    nup, nup_with_progress, optimize, redact, redact_find, redact_find_with_progress,
+    add_bookmark, arrange, booklet, booklet_with_progress, compress, compress_with_progress,
+    create_blank, crop, crop_margins, crop_margins_with_progress, crop_with_progress, delete,
+    encrypt, export_bookmarks, extract_images, fill_form, filter, filter_with_progress, flatten,
+    flatten_with_progress, halve, import_bookmarks, is_linearized, linearize,
+    linearize_with_progress, list_bookmarks, merge, merge_with_progress, move_pages, nup,
+    nup_with_progress, optimize, redact, redact_find, redact_find_with_progress,
     redact_with_progress, repair, repair_loaded, repair_with, reset_crop, rotate, scale_to,
     scale_to_with_progress, set_mediabox, set_mediabox_with_progress, split, split_plan,
     split_plan_with_options, split_with_options, split_with_progress, stamp, stamp_with_progress,
-    strip, Anchor, Binding, BookletOptions, CompressLevel, CompressReport, EncryptOptions, Filter,
-    FilterReport, Fit, FlattenOptions, FlattenReport, Margins, MetadataEdit, NupOptions,
-    OptimizeLevel, OptimizeReport, PageOrder, PageSize, Permissions, Point, Rect, RedactReport,
-    RepairReport, SkipReason, SplitOptions, SplitSpec, StampContent, StampFont, StampLayer,
-    StampOptions, StripReport, Stroke,
+    strip, to_pdfa, Anchor, Binding, BookletOptions, Bookmark, CompressLevel, CompressReport,
+    EncryptOptions, FieldValue, FillFormReport, Filter, FilterReport, Fit, FlattenOptions,
+    FlattenReport, HalveDirection, HalveOptions, Margins, MetadataEdit, NupOptions, OptimizeLevel,
+    OptimizeReport, PageOrder, PageSize, PdfALevel, PdfAReport, Permissions, Point, Rect,
+    RedactReport, RepairReport, SkipReason, SplitOptions, SplitSpec, StampContent, StampFont,
+    StampLayer, StampOptions, StripReport, Stroke,
 };
+#[cfg(feature = "convert")]
+pub use ops::{qr_code, QrEcc, QrOptions};
+#[cfg(feature = "signatures")]
+pub use ops::{verify_signatures, SignatureReport};
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};
 #[cfg(feature = "render")]
@@ -69,6 +78,8 @@ pub struct Capabilities {
     pub convert: bool,
     /// OCR, via Tesseract.
     pub ocr: bool,
+    /// Digital signature verification.
+    pub signatures: bool,
 }
 
 impl Capabilities {
@@ -78,6 +89,7 @@ impl Capabilities {
             render: cfg!(feature = "render"),
             convert: cfg!(feature = "convert"),
             ocr: cfg!(feature = "ocr"),
+            signatures: cfg!(feature = "signatures"),
         }
     }
 }

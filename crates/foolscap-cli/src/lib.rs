@@ -10,16 +10,10 @@ pub mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-#[cfg(feature = "convert")]
-use commands::convert;
-#[cfg(feature = "ocr")]
-use commands::ocr;
 use commands::{
     arrange, booklet, compress, decrypt, encrypt, flatten, info, merge, meta, nup, optimize,
     repair, rotate, split, stamp, strip,
 };
-#[cfg(feature = "render")]
-use commands::{overlay, render};
 use pdf_core::PdfError;
 
 #[derive(Debug, Parser)]
@@ -93,6 +87,32 @@ pub enum Command {
     Nup(nup::Args),
     /// Create a booklet for duplex printing and folding.
     Booklet(booklet::Args),
+    /// Reorder a document's objects for fast web viewing (linearization).
+    Linearize(commands::linearize::Args),
+    /// Convert a document to an archival PDF/A-1b/2b/3b.
+    ToPdfa(commands::pdfa::ToPdfaArgs),
+    /// Check a document for PDF/A conformance.
+    CheckPdfa(commands::pdfa::CheckPdfaArgs),
+    /// List, add, import, or export document bookmarks.
+    Bookmark(commands::bookmark::Args),
+    /// Cut every page in half, e.g. for scanned double-page spreads.
+    Halve(commands::halve::Args),
+    /// Create a new blank document.
+    Create(commands::create::Args),
+    /// Fill interactive form fields from a JSON file.
+    FillForm(commands::fill_form::Args),
+    /// Check the digital signatures in a document.
+    #[cfg(feature = "signatures")]
+    VerifySignatures(commands::signatures::Args),
+    /// Generate a PDF containing a QR code.
+    #[cfg(feature = "convert")]
+    QrCode(commands::qr::Args),
+    /// Export pages as vector SVG.
+    #[cfg(feature = "render")]
+    ToSvg(commands::svg::Args),
+    /// Extract a document's text as Markdown.
+    #[cfg(feature = "render")]
+    ToMarkdown(commands::to_markdown::Args),
     /// Rasterise pages to PNG.
     #[cfg(feature = "render")]
     Render(commands::render::RenderArgs),
@@ -174,6 +194,21 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Redact(args) => commands::redact::run(args, force, password),
         Command::Nup(args) => nup::run(args, force, password),
         Command::Booklet(args) => booklet::run(args, force, password),
+        Command::Linearize(args) => commands::linearize::run(args, force, password),
+        Command::ToPdfa(args) => commands::pdfa::to_pdfa(args, force, password),
+        Command::CheckPdfa(args) => commands::pdfa::check(args, password),
+        Command::Bookmark(args) => commands::bookmark::run(args, force, password),
+        Command::Halve(args) => commands::halve::run(args, force, password),
+        Command::Create(args) => commands::create::run(args, force),
+        Command::FillForm(args) => commands::fill_form::run(args, force, password),
+        #[cfg(feature = "signatures")]
+        Command::VerifySignatures(args) => commands::signatures::run(args, password),
+        #[cfg(feature = "convert")]
+        Command::QrCode(args) => commands::qr::run(args, force),
+        #[cfg(feature = "render")]
+        Command::ToSvg(args) => commands::svg::run(args, force, password),
+        #[cfg(feature = "render")]
+        Command::ToMarkdown(args) => commands::to_markdown::run(args, force, password),
         #[cfg(feature = "render")]
         Command::Render(args) => commands::render::render(args, force, password),
         #[cfg(feature = "render")]

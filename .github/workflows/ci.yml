@@ -17,7 +17,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Every optional feature on, as listed in CLAUDE.md.
-  FEATURES: foolscap-cli/full,pdf-core/render,pdf-core/convert,pdf-core/ocr
+  FEATURES: foolscap-cli/full,pdf-core/render,pdf-core/convert,pdf-core/ocr,pdf-core/signatures
 
 jobs:
   check:

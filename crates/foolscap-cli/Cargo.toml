@@ -21,7 +21,8 @@ default = []
 render = ["pdf-core/render", "dep:image"]
 convert = ["pdf-core/convert"]
 ocr = ["pdf-core/ocr", "render"]
-full = ["render", "convert", "ocr"]
+signatures = ["pdf-core/signatures"]
+full = ["render", "convert", "ocr", "signatures"]
 
 [dev-dependencies]
 clap_complete.workspace = true
@@ -34,6 +35,7 @@ image = { workspace = true, optional = true, features = ["png"] }
 
 anyhow.workspace = true
 clap.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

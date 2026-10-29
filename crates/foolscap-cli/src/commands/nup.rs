@@ -81,7 +81,7 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     let after = imposed.page_count();
     imposed.save(&args.output)?;
 
-    println!("{} pages -> {} pages", pages(before), pages(after));
+    println!("{} -> {}", pages(before), pages(after));
     println!("{}", args.output.display());
     Ok(())
 }

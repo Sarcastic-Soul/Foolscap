@@ -26,9 +26,11 @@ pub enum FontEmbedding {
 pub struct SvgOptions {
     /// Page range to convert.
     pub pages: PageRange,
-    /// Font embedding strategy.
+    /// Font embedding strategy. Not applied yet: the output is always what
+    /// MuPDF's SVG writer produces, whatever this is set to.
     pub font_embedding: FontEmbedding,
     /// Convert text to vector paths instead of keeping it as selectable text.
+    /// Not applied yet, for the same reason as `font_embedding`.
     pub text_as_paths: bool,
     /// Password for an encrypted input, used only if the file needs one.
     pub password: Option<String>,
@@ -173,12 +175,7 @@ fn render_page_to_svg(doc: &MuPdfDocument, page_index: usize) -> Result<String> 
     Ok(svg)
 }
 
-fn output_paths(
-    input: &Path,
-    out_dir: &Path,
-    selected: &[usize],
-    page_count: i32,
-) -> Vec<PathBuf> {
+fn output_paths(input: &Path, out_dir: &Path, selected: &[usize], page_count: i32) -> Vec<PathBuf> {
     entry_names(input, selected, page_count as usize)
         .into_iter()
         .map(|name| out_dir.join(name))
@@ -224,13 +221,7 @@ mod tests {
 
     #[test]
     fn names_are_padded_to_the_page_count() {
-        let options = SvgOptions::default();
-        let paths = output_paths(
-            Path::new("/in/report.pdf"),
-            Path::new("/out"),
-            &[0, 9],
-            120,
-        );
+        let paths = output_paths(Path::new("/in/report.pdf"), Path::new("/out"), &[0, 9], 120);
 
         assert_eq!(paths[0], Path::new("/out/report-001.svg"));
         assert_eq!(paths[1], Path::new("/out/report-010.svg"));
@@ -238,13 +229,7 @@ mod tests {
 
     #[test]
     fn single_page_document_uses_width_of_1() {
-        let options = SvgOptions::default();
-        let paths = output_paths(
-            Path::new("/in/single.pdf"),
-            Path::new("/out"),
-            &[0],
-            1,
-        );
+        let paths = output_paths(Path::new("/in/single.pdf"), Path::new("/out"), &[0], 1);
 
         assert_eq!(paths[0], Path::new("/out/single-1.svg"));
     }

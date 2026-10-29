@@ -19,14 +19,6 @@ pub struct Args {
     /// Where to write the result (required for add/import).
     #[arg(short, long)]
     output: Option<PathBuf>,
-
-    /// Overwrite output without asking.
-    #[arg(long, global = true)]
-    force: bool,
-
-    /// Password for encrypted input.
-    #[arg(long, global = true, env = "FOOLSCAP_PASSWORD")]
-    password: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -63,21 +55,21 @@ enum Command {
     },
 }
 
-pub fn run(args: Args) -> Result<()> {
-    match args.command {
-        Command::List => run_list(args),
+pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
+    match &args.command {
+        Command::List => run_list(&args, password),
         Command::Add {
             title,
             page,
             parent,
-        } => run_add(args, title, page, parent),
-        Command::Import { file } => run_import(args, file),
-        Command::Export { ref output } => run_export(args, output),
+        } => run_add(&args, title.clone(), *page, *parent, force, password),
+        Command::Import { file } => run_import(&args, file.clone(), force, password),
+        Command::Export { output } => run_export(&args, output.clone(), force, password),
     }
 }
 
-fn run_list(args: Args) -> Result<()> {
-    let doc = Document::open_with(&args.input, args.password.as_deref())?;
+fn run_list(args: &Args, password: Option<&str>) -> Result<()> {
+    let doc = Document::open_with(&args.input, password)?;
     let bookmarks = list_bookmarks(&doc)?;
 
     if bookmarks.is_empty() {
@@ -100,14 +92,21 @@ fn print_bookmarks(bookmarks: &[Bookmark], depth: usize, counter: &mut usize) {
     }
 }
 
-fn run_add(args: Args, title: String, page: usize, parent: usize) -> Result<()> {
+fn run_add(
+    args: &Args,
+    title: String,
+    page: usize,
+    parent: usize,
+    force: bool,
+    password: Option<&str>,
+) -> Result<()> {
     let output = args
         .output
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("--output is required for add"))?;
-    guard_output(output, args.force)?;
+    guard_output(output, force)?;
 
-    let mut doc = Document::open_with(&args.input, args.password.as_deref())?;
+    let mut doc = Document::open_with(&args.input, password)?;
 
     if page == 0 || page > doc.page_count() {
         bail!("page must be between 1 and {}", doc.page_count());
@@ -121,25 +120,25 @@ fn run_add(args: Args, title: String, page: usize, parent: usize) -> Result<()> 
     Ok(())
 }
 
-fn run_import(args: Args, file: PathBuf) -> Result<()> {
+fn run_import(args: &Args, file: PathBuf, force: bool, password: Option<&str>) -> Result<()> {
     let output = args
         .output
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("--output is required for import"))?;
-    guard_output(output, args.force)?;
+    guard_output(output, force)?;
 
     let json = std::fs::read_to_string(&file)?;
     let bookmarks: Vec<Bookmark> = serde_json::from_str(&json)?;
 
     // Validate page numbers.
-    let mut doc = Document::open_with(&args.input, args.password.as_deref())?;
+    let mut doc = Document::open_with(&args.input, password)?;
     let page_count = doc.page_count();
 
     fn validate(bookmarks: &[Bookmark], page_count: usize) -> Result<()> {
         for bm in bookmarks {
             if bm.page == 0 || bm.page > page_count {
                 bail!(
-                    "bookmark '{}' has invalid page {} (must be 1..{})",
+                    "bookmark '{}' has invalid page {} (must be 1..={})",
                     bm.title,
                     bm.page,
                     page_count
@@ -157,15 +156,20 @@ fn run_import(args: Args, file: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn run_export(args: Args, output: Option<PathBuf>) -> Result<()> {
-    let doc = Document::open_with(&args.input, args.password.as_deref())?;
+fn run_export(
+    args: &Args,
+    output: Option<PathBuf>,
+    force: bool,
+    password: Option<&str>,
+) -> Result<()> {
+    let doc = Document::open_with(&args.input, password)?;
     let bookmarks = export_bookmarks(&doc)?;
 
     let json = serde_json::to_string_pretty(&bookmarks)?;
 
     match output {
         Some(path) => {
-            guard_output(&path, args.force)?;
+            guard_output(&path, force)?;
             std::fs::write(&path, json)?;
             println!("{}", path.display());
         }

@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{build_text_page, build_with_image, Attributes, ImagePlacement, Workspace, A4};
+use common::{build_text_page, build_with_image, ImagePlacement, Workspace};
 use pdf_core::ops::svg::{plan, to_svg, FontEmbedding, SvgOptions};
 use pdf_core::PageRange;
 use std::fs;

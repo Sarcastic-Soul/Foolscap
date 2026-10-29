@@ -31,6 +31,13 @@ tracing = "0.1"
 # MIT-licensed (AGPL-compatible); used to bundle rasterised pages.
 zip = "2"
 qrcodegen = "1"
+# Signature verification (MIT or Apache-2.0, AGPL-compatible). sha1 backs the
+# legacy adbe.pkcs7.sha1 sub-filter; everything newer uses the SHA-2 family.
+x509-parser = "0.16"
+sha1 = "0.10"
+sha2 = "0.10"
+rsa = "0.9"
+p256 = { version = "0.13", features = ["ecdsa"] }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

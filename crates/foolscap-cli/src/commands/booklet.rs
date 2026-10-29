@@ -78,7 +78,12 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     let after = imposed.page_count();
     imposed.save(&args.output)?;
 
-    println!("{} pages -> {} sheets", pages(before), pages(after));
+    let sheets = if after == 1 {
+        "1 sheet".to_string()
+    } else {
+        format!("{after} sheets")
+    };
+    println!("{} -> {}", pages(before), sheets);
     println!("{}", args.output.display());
     Ok(())
 }

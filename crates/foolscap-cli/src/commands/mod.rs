@@ -2,16 +2,21 @@
 
 pub mod arrange;
 pub mod booklet;
+pub mod bookmark;
 pub mod compress;
 #[cfg(feature = "convert")]
 pub mod convert;
+pub mod create;
 pub mod crop;
 pub mod decrypt;
 pub mod encrypt;
 pub mod extract_images;
+pub mod fill_form;
 pub mod filter;
 pub mod flatten;
+pub mod halve;
 pub mod info;
+pub mod linearize;
 pub mod merge;
 pub mod meta;
 pub mod nup;
@@ -20,13 +25,22 @@ pub mod ocr;
 pub mod optimize;
 #[cfg(feature = "render")]
 pub mod overlay;
+pub mod pdfa;
+#[cfg(feature = "convert")]
+pub mod qr;
 pub mod redact;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod repair;
 pub mod rotate;
+#[cfg(feature = "signatures")]
+pub mod signatures;
 pub mod split;
 pub mod stamp;
 pub mod strip;
+#[cfg(feature = "render")]
+pub mod svg;
 #[cfg(all(feature = "convert", feature = "render"))]
 pub mod to_images;
+#[cfg(feature = "render")]
+pub mod to_markdown;

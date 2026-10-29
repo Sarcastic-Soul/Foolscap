@@ -207,7 +207,7 @@ pub fn nup(doc: &Document, options: NupOptions) -> Result<Document> {
 pub fn nup_with_progress(
     doc: &Document,
     options: NupOptions,
-    mut progress: Option<ProgressFn<'_>>,
+    progress: Option<ProgressFn<'_>>,
 ) -> Result<Document> {
     options.validate()?;
 
@@ -600,8 +600,9 @@ pub fn booklet_with_progress(
         fit: options.fit,
     };
 
-    // Create a temporary document with pages in imposed order
-    let temp_doc = create_document_with_page_order(doc, &imposed_order, padded_pages)?;
+    // Create a temporary document with pages in imposed order. Padding slots
+    // past the last real page are mapped to one blank page.
+    let temp_doc = create_document_with_page_order(doc, &imposed_order, source_pages)?;
 
     // Apply n-up
     nup_with_progress(&temp_doc, nup_options, progress)
@@ -631,36 +632,27 @@ fn compute_signature_order(sig_pages: &[usize], signature_size: usize) -> Vec<us
 }
 
 /// Create a new document with pages in the specified order.
+///
+/// Any index at or past `source_pages` is a padding slot and becomes a single
+/// blank page appended after the real pages.
 fn create_document_with_page_order(
     doc: &Document,
     order: &[usize],
-    total_pages: usize,
+    source_pages: usize,
 ) -> Result<Document> {
-    // Use the assemble module to create a document with reordered pages
-    let source = crate::assemble::Source {
-        doc: doc.inner.clone(),
-        pages: order.to_vec(),
-    };
+    let with_blank = crate::assemble::assemble(vec![
+        crate::assemble::Source {
+            doc: doc.inner.clone(),
+            pages: (0..source_pages).collect(),
+        },
+        crate::assemble::Source::all(create_blank_page_doc()),
+    ])?;
 
-    let mut assembled = crate::assemble::assemble(vec![source])?;
-
-    // Pad with blank pages if needed
-    let current_pages = assembled.get_pages().len();
-    if current_pages < total_pages {
-        // Add blank pages by creating a source with blank pages
-        for _ in current_pages..total_pages {
-            let blank_doc = create_blank_page_doc();
-            let blank_source = crate::assemble::Source::all(blank_doc);
-            let new_assembled = crate::assemble::assemble(vec![
-                crate::assemble::Source {
-                    doc: assembled,
-                    pages: (0..current_pages).collect(),
-                },
-                blank_source,
-            ])?;
-            assembled = new_assembled;
-        }
-    }
+    let pages: Vec<usize> = order.iter().map(|&p| p.min(source_pages)).collect();
+    let assembled = crate::assemble::assemble(vec![crate::assemble::Source {
+        doc: with_blank,
+        pages,
+    }])?;
 
     Ok(Document::from_lopdf(assembled, None))
 }
@@ -764,9 +756,9 @@ impl Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
     use crate::document::Document as FoolscapDocument;
     use lopdf::{dictionary, Document, Object, Stream};
+    use std::str::FromStr;
 
     fn build_test_doc(page_count: usize) -> lopdf::Document {
         let mut doc = Document::with_version("1.5");
@@ -784,11 +776,11 @@ mod tests {
         let media_box: Vec<Object> = vec![0.into(), 0.into(), 595.into(), 842.into()];
 
         let mut kids = Vec::with_capacity(page_count);
-        for number in 1..=page_count {
+        for _ in 1..=page_count {
             let content = Stream::new(dictionary! {}, vec![]);
             let content_id = doc.add_object(content);
 
-            let mut page = dictionary! {
+            let page = dictionary! {
                 "Type" => "Page",
                 "Parent" => pages_id,
                 "Contents" => content_id,
@@ -827,8 +819,10 @@ mod tests {
 
     #[test]
     fn nup_options_validate_rejects_zero() {
-        let mut opts = NupOptions::default();
-        opts.rows = 0;
+        let mut opts = NupOptions {
+            rows: 0,
+            ..Default::default()
+        };
         assert!(opts.validate().is_err());
         opts.rows = 2;
         opts.cols = 0;
@@ -837,8 +831,10 @@ mod tests {
 
     #[test]
     fn nup_options_validate_rejects_large() {
-        let mut opts = NupOptions::default();
-        opts.rows = 11;
+        let mut opts = NupOptions {
+            rows: 11,
+            ..Default::default()
+        };
         assert!(opts.validate().is_err());
         opts.rows = 2;
         opts.cols = 11;
@@ -855,8 +851,10 @@ mod tests {
 
     #[test]
     fn booklet_options_validate_rejects_non_multiple_of_4() {
-        let mut opts = BookletOptions::default();
-        opts.signature_size = 6;
+        let mut opts = BookletOptions {
+            signature_size: 6,
+            ..Default::default()
+        };
         assert!(opts.validate().is_err());
         opts.signature_size = 8;
         assert!(opts.validate().is_ok());
@@ -988,5 +986,26 @@ mod tests {
         let result = booklet(&foolscap_doc, options).unwrap();
         // 16 pages -> 8 sheets (2 pages per sheet)
         assert_eq!(result.page_count(), 8);
+    }
+
+    #[test]
+    fn booklet_pads_a_partial_signature_with_blank_pages() {
+        // 5 real pages fill one 8-slot signature; the last three slots are blank.
+        let doc = build_test_doc(5);
+        let foolscap_doc = FoolscapDocument::from_lopdf(doc, None);
+
+        let options = BookletOptions {
+            signature_size: 8,
+            paper_size: PageSize::A4,
+            binding: Binding::ShortEdge,
+            margins: Margins::default(),
+            gap: 0.0,
+            border: false,
+            fit: Fit::Contain,
+        };
+
+        let result = booklet(&foolscap_doc, options).unwrap();
+        // 8 slots -> 4 sheets (2 pages per sheet)
+        assert_eq!(result.page_count(), 4);
     }
 }

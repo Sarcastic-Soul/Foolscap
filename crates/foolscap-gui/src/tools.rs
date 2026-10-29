@@ -44,6 +44,9 @@ pub enum ToolId {
     QrCode,
     ToSvg,
     ToMarkdown,
+    Attach,
+    Layers,
+    PageLabels,
 }
 
 impl ToolId {
@@ -82,6 +85,9 @@ impl ToolId {
             ToolId::QrCode => "qr-code",
             ToolId::ToSvg => "to-svg",
             ToolId::ToMarkdown => "to-markdown",
+            ToolId::Attach => "attach",
+            ToolId::Layers => "layers",
+            ToolId::PageLabels => "page-labels",
         }
     }
 }
@@ -442,6 +448,27 @@ pub const TOOLS: &[Tool] = &[
         "text-x-generic-symbolic",
         Needs::NONE.document().render(),
     ),
+    tool(
+        ToolId::Attach,
+        "Attach file",
+        "Embed a file in the PDF",
+        "mail-attachment-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::Layers,
+        "Layers",
+        "Show or hide a layer",
+        "view-list-ordered-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::PageLabels,
+        "Page labels",
+        "Roman, letters, or numbers",
+        "format-text-rich-symbolic",
+        Needs::NONE.document(),
+    ),
 ];
 
 /// Find a tool by its window action name.
@@ -511,6 +538,9 @@ mod tests {
             ToolId::QrCode,
             ToolId::ToSvg,
             ToolId::ToMarkdown,
+            ToolId::Attach,
+            ToolId::Layers,
+            ToolId::PageLabels,
         ] {
             assert!(ids.contains(&required), "missing {required:?}");
         }

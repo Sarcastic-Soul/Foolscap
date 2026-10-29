@@ -4,6 +4,8 @@
 //! a typed result. None of them print, prompt, or exit.
 
 pub mod arrange;
+pub mod articles;
+pub mod attachments;
 pub mod bookmark;
 pub mod compress;
 pub(crate) mod contents;
@@ -16,6 +18,7 @@ pub mod flatten;
 pub mod forms;
 pub mod halve;
 pub(crate) mod image;
+pub mod layers;
 pub mod linearize;
 pub mod merge;
 pub mod metadata;
@@ -23,6 +26,7 @@ pub mod nup;
 pub mod optimize;
 #[cfg(feature = "render")]
 pub mod overlay;
+pub mod page_labels;
 pub mod pdfa;
 #[cfg(feature = "convert")]
 pub mod qr;
@@ -88,3 +92,8 @@ pub use strip::{strip, StripReport};
 pub use svg::{plan, to_svg, to_svg_with_progress, SvgOptions};
 #[cfg(feature = "render")]
 pub use to_markdown::{to_markdown, MarkdownOptions};
+
+pub use articles::{list_articles, Article};
+pub use attachments::{add_attachment, extract_attachment, list_attachments, Attachment};
+pub use layers::{list_layers, set_layer_visibility, Layer};
+pub use page_labels::{page_labels, set_page_labels, LabelRange, LabelStyle};

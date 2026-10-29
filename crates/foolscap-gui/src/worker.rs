@@ -351,6 +351,9 @@ pub enum Task {
     Inspect,
     ExportMarkdown,
     ExportSvg,
+    Attach,
+    Layers,
+    PageLabels,
 }
 
 /// The pending changes to apply before writing anything out.

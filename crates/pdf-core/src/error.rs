@@ -109,6 +109,21 @@ pub enum PdfError {
     #[error("invalid form data: {0}")]
     InvalidFormData(String),
 
+    #[error("invalid attachment: {0}")]
+    InvalidAttachment(String),
+
+    #[error("no attachment named {0:?}")]
+    NoSuchAttachment(String),
+
+    #[error("no layer named {0:?}")]
+    NoSuchLayer(String),
+
+    #[error("the document has no optional content layers")]
+    NoLayers,
+
+    #[error("invalid page label: {0}")]
+    InvalidPageLabel(String),
+
     #[error("no match for {0:?}")]
     TextNotFound(String),
 

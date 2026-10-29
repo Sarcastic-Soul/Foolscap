@@ -87,6 +87,14 @@ pub enum Command {
     Nup(nup::Args),
     /// Create a booklet for duplex printing and folding.
     Booklet(booklet::Args),
+    /// List, add, or extract embedded file attachments.
+    Attachments(commands::attachments::Args),
+    /// List or show and hide optional content layers.
+    Layers(commands::layers::Args),
+    /// Read, set, or clear the page numbers a viewer shows.
+    PageLabels(commands::page_labels::Args),
+    /// List the article threads of a document.
+    Articles(commands::articles::Args),
     /// Reorder a document's objects for fast web viewing (linearization).
     Linearize(commands::linearize::Args),
     /// Convert a document to an archival PDF/A-1b/2b/3b.
@@ -194,6 +202,10 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Redact(args) => commands::redact::run(args, force, password),
         Command::Nup(args) => nup::run(args, force, password),
         Command::Booklet(args) => booklet::run(args, force, password),
+        Command::Attachments(args) => commands::attachments::run(args, force, password),
+        Command::Layers(args) => commands::layers::run(args, force, password),
+        Command::PageLabels(args) => commands::page_labels::run(args, force, password),
+        Command::Articles(args) => commands::articles::run(args, password),
         Command::Linearize(args) => commands::linearize::run(args, force, password),
         Command::ToPdfa(args) => commands::pdfa::to_pdfa(args, force, password),
         Command::CheckPdfa(args) => commands::pdfa::check(args, password),

@@ -38,6 +38,10 @@ pub use ops::overlay::overlay;
 #[cfg(feature = "render")]
 pub use ops::to_markdown::{to_markdown, MarkdownOptions};
 pub use ops::{
+    add_attachment, extract_attachment, list_articles, list_attachments, list_layers, page_labels,
+    set_layer_visibility, set_page_labels, Article, Attachment, LabelRange, LabelStyle, Layer,
+};
+pub use ops::{
     add_bookmark, arrange, booklet, booklet_with_progress, compress, compress_with_progress,
     create_blank, crop, crop_margins, crop_margins_with_progress, crop_with_progress, delete,
     encrypt, export_bookmarks, extract_images, fill_form, filter, filter_with_progress, flatten,

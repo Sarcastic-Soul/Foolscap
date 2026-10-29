@@ -578,3 +578,150 @@ impl App {
         });
     }
 }
+
+impl App {
+    /// Embed a chosen file in the open document.
+    pub(super) fn attach_file(self: &Rc<Self>) {
+        if !self.require_document_queued() {
+            return;
+        }
+        let dialog = FileDialog::builder()
+            .title("Choose the file to attach")
+            .build();
+        dialog.open(
+            Some(&self.ui.window),
+            None::<&gio::Cancellable>,
+            clone!(
+                #[strong(rename_to = app)]
+                self,
+                move |result| {
+                    let Ok(file) = result else { return };
+                    let Some(attachment) = file.path() else {
+                        return;
+                    };
+                    app.write_pdf_job("-attached", "Attach file", move |path, edits, job_id| {
+                        Request::Transform {
+                            path,
+                            transform: Transform::Attach(attachment),
+                            edits,
+                            job_id,
+                        }
+                    });
+                }
+            ),
+        );
+    }
+
+    /// Show or hide one optional content layer, by its name.
+    pub(super) fn layers(self: &Rc<Self>) {
+        if !self.require_document_queued() {
+            return;
+        }
+
+        show_form(
+            &self.ui.window,
+            "Layers",
+            "Choose where to save…",
+            |fields| {
+                let name = gtk4::Entry::new();
+                name.set_placeholder_text(Some("Layer name, as the viewer shows it"));
+                let action = dropdown(&["Show", "Hide"]);
+                fields.add("Layer", &name);
+                fields.add("Action", &action);
+                fields.note("Layer names are the ones `foolscap layers FILE list` prints.");
+                Box::new(move || {
+                    let name = name.text().trim().to_string();
+                    if name.is_empty() {
+                        return Err("Enter the name of the layer.".to_string());
+                    }
+                    Ok((name, action.selected() == 0))
+                })
+            },
+            clone!(
+                #[strong(rename_to = app)]
+                self,
+                move |(name, visible): (String, bool)| {
+                    app.write_pdf_job("-layers", "Layers", move |path, edits, job_id| {
+                        Request::Transform {
+                            path,
+                            transform: Transform::SetLayer { name, visible },
+                            edits,
+                            job_id,
+                        }
+                    });
+                }
+            ),
+        );
+    }
+
+    /// Number the pages in a chosen style, or remove the numbering.
+    pub(super) fn page_labels(self: &Rc<Self>) {
+        if !self.require_document_queued() {
+            return;
+        }
+
+        show_form(
+            &self.ui.window,
+            "Page labels",
+            "Choose where to save…",
+            |fields| {
+                let style = dropdown(&[
+                    "Numbers: 1, 2, 3",
+                    "Lower roman: i, ii, iii",
+                    "Upper roman: I, II, III",
+                    "Upper letters: A, B, C",
+                    "Lower letters: a, b, c",
+                    "Prefix only",
+                    "No labels (remove them)",
+                ]);
+                let prefix = gtk4::Entry::new();
+                prefix.set_placeholder_text(Some("Optional, e.g. A-"));
+                let first = gtk4::Entry::new();
+                first.set_text("1");
+                fields.add("Style", &style);
+                fields.add("Prefix", &prefix);
+                fields.add("First number", &first);
+                fields.note("The labels apply to every page, starting at page 1.");
+                Box::new(move || {
+                    const STYLES: [Option<pdf_core::LabelStyle>; 6] = [
+                        Some(pdf_core::LabelStyle::Decimal),
+                        Some(pdf_core::LabelStyle::LowerRoman),
+                        Some(pdf_core::LabelStyle::UpperRoman),
+                        Some(pdf_core::LabelStyle::UpperAlpha),
+                        Some(pdf_core::LabelStyle::LowerAlpha),
+                        Some(pdf_core::LabelStyle::None),
+                    ];
+                    // The last choice, with no entry in STYLES, removes the labels.
+                    let style = match STYLES.get(style.selected() as usize) {
+                        Some(Some(style)) => *style,
+                        _ => return Ok(Vec::new()),
+                    };
+                    let first: u32 = number(&first, "the first number")?;
+                    if first == 0 {
+                        return Err("The first number is at least 1.".to_string());
+                    }
+                    Ok(vec![pdf_core::LabelRange {
+                        start_page: 1,
+                        style,
+                        prefix: prefix.text().to_string(),
+                        first,
+                    }])
+                })
+            },
+            clone!(
+                #[strong(rename_to = app)]
+                self,
+                move |ranges: Vec<pdf_core::LabelRange>| {
+                    app.write_pdf_job("-labelled", "Page labels", move |path, edits, job_id| {
+                        Request::Transform {
+                            path,
+                            transform: Transform::PageLabels(ranges),
+                            edits,
+                            job_id,
+                        }
+                    });
+                }
+            ),
+        );
+    }
+}

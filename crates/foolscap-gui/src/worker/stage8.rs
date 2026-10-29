@@ -12,8 +12,8 @@ use pdf_core::ops::nup::{booklet_with_progress, nup_with_progress, BookletOption
 use pdf_core::ops::pdfa::{check_pdfa, to_pdfa, PdfALevel, PdfAReport};
 use pdf_core::ops::svg::{plan as plan_svg, to_svg_with_progress, SvgOptions};
 use pdf_core::ops::{
-    add_bookmark, fill_form, halve, linearize_with_progress, parse_form_data, FieldValue,
-    HalveOptions,
+    add_attachment, add_bookmark, fill_form, halve, linearize_with_progress, parse_form_data,
+    set_layer_visibility, set_page_labels, FieldValue, HalveOptions, LabelRange,
 };
 use pdf_core::{
     create_blank, qr_code, to_markdown, verify_signatures, Document, MarkdownOptions, PageRange,
@@ -43,6 +43,12 @@ pub enum Transform {
     },
     /// Fill form fields from a JSON file of `"name": value` pairs.
     FillForm(PathBuf),
+    /// Embed a file, named after its own file name.
+    Attach(PathBuf),
+    /// Show or hide an optional content layer by name.
+    SetLayer { name: String, visible: bool },
+    /// Replace the page labels; an empty list clears them.
+    PageLabels(Vec<LabelRange>),
 }
 
 impl Transform {
@@ -53,6 +59,9 @@ impl Transform {
             Transform::NUp(_) | Transform::Booklet(_) | Transform::Halve(_) => Task::Layout,
             Transform::Bookmark { .. } => Task::Bookmark,
             Transform::FillForm(_) => Task::FillForm,
+            Transform::Attach(_) => Task::Attach,
+            Transform::SetLayer { .. } => Task::Layers,
+            Transform::PageLabels(_) => Task::PageLabels,
         }
     }
 }
@@ -133,6 +142,37 @@ pub fn apply(
                 summary.push_str(&format!("; unsupported: {}", report.unsupported.join(", ")));
             }
             Ok((document, summary))
+        }
+        Transform::Attach(file) => {
+            let mut document = document;
+            let name = file
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .ok_or_else(|| {
+                    PdfError::InvalidAttachment(format!("{} has no file name", file.display()))
+                })?;
+            let data = std::fs::read(file).map_err(|source| PdfError::Io {
+                path: file.clone(),
+                source,
+            })?;
+            add_attachment(&mut document, &name, &data)?;
+            Ok((document, format!("Embedded {name}")))
+        }
+        Transform::SetLayer { name, visible } => {
+            let mut document = document;
+            set_layer_visibility(&mut document, name, *visible)?;
+            let verb = if *visible { "Showed" } else { "Hid" };
+            Ok((document, format!("{verb} the layer “{name}”")))
+        }
+        Transform::PageLabels(ranges) => {
+            let mut document = document;
+            set_page_labels(&mut document, ranges)?;
+            let summary = if ranges.is_empty() {
+                "Cleared the page labels"
+            } else {
+                "Set the page labels"
+            };
+            Ok((document, summary.into()))
         }
     }
 }

@@ -919,6 +919,9 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("qr-code", |app| app.qr_code()),
         ("to-svg", |app| app.to_svg()),
         ("to-markdown", |app| app.to_markdown()),
+        ("attach", |app| app.attach_file()),
+        ("layers", |app| app.layers()),
+        ("page-labels", |app| app.page_labels()),
         // The compare view.
         ("compare-open-left", |app| {
             app.choose_file_for_compare(ComparisonSide::Left)
@@ -4529,6 +4532,9 @@ fn explain(task: Task, error: &PdfError) -> (String, String) {
         Task::Inspect => "Could not check the document",
         Task::ExportMarkdown => "Could not export Markdown",
         Task::ExportSvg => "Could not export SVG",
+        Task::Attach => "Could not attach the file",
+        Task::Layers => "Could not change the layer",
+        Task::PageLabels => "Could not set the page labels",
     }
     .to_string();
 

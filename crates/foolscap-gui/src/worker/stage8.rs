@@ -49,6 +49,10 @@ pub enum Transform {
     SetLayer { name: String, visible: bool },
     /// Replace the page labels; an empty list clears them.
     PageLabels(Vec<LabelRange>),
+    /// Remove the bookmark printed as this number, with its children.
+    RemoveBookmark(usize),
+    /// Move the bookmark printed as `index` one place up or down among its siblings.
+    MoveBookmark { index: usize, up: bool },
 }
 
 impl Transform {
@@ -62,6 +66,7 @@ impl Transform {
             Transform::Attach(_) => Task::Attach,
             Transform::SetLayer { .. } => Task::Layers,
             Transform::PageLabels(_) => Task::PageLabels,
+            Transform::RemoveBookmark(_) | Transform::MoveBookmark { .. } => Task::Bookmark,
         }
     }
 }
@@ -164,6 +169,24 @@ pub fn apply(
             let verb = if *visible { "Showed" } else { "Hid" };
             Ok((document, format!("{verb} the layer “{name}”")))
         }
+        Transform::RemoveBookmark(index) => {
+            let mut document = document;
+            let removed = pdf_core::remove_bookmark(&mut document, *index)?;
+            Ok((
+                document,
+                format!("Removed the bookmark “{}”", removed.title),
+            ))
+        }
+        Transform::MoveBookmark { index, up } => {
+            let mut document = document;
+            if pdf_core::move_bookmark(&mut document, *index, *up)? {
+                Ok((document, "Moved the bookmark".into()))
+            } else {
+                Err(PdfError::Internal(
+                    "that bookmark is already at the end of its level".into(),
+                ))
+            }
+        }
         Transform::PageLabels(ranges) => {
             let mut document = document;
             set_page_labels(&mut document, ranges)?;
@@ -216,6 +239,10 @@ pub fn create(creation: &Creation) -> Result<Document> {
 pub enum Inspection {
     /// Every digital signature in the file.
     Signatures,
+    /// The embedded files, with their sizes.
+    Attachments,
+    /// The optional content layers and whether each is shown.
+    Layers,
     /// PDF/A conformance, using the structural rules the core checks.
     PdfA,
 }
@@ -233,7 +260,48 @@ pub fn inspect(source: &Path, password: Option<&str>, which: Inspection) -> Resu
     match which {
         Inspection::Signatures => signatures_report(&document),
         Inspection::PdfA => pdfa_report(&document),
+        Inspection::Attachments => attachments_report(&document),
+        Inspection::Layers => layers_report(&document),
     }
+}
+
+fn attachments_report(document: &Document) -> Result<Inspected> {
+    let attachments = pdf_core::list_attachments(document)?;
+    let body = if attachments.is_empty() {
+        "This document has no attachments.".to_string()
+    } else {
+        attachments
+            .iter()
+            .map(|attachment| format!("{}  ({} bytes)", attachment.name, attachment.size))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(Inspected {
+        title: "Attachments".into(),
+        body,
+        summary: format!("{} attachment(s)", attachments.len()),
+    })
+}
+
+fn layers_report(document: &Document) -> Result<Inspected> {
+    let layers = pdf_core::list_layers(document)?;
+    let body = if layers.is_empty() {
+        "This document has no optional content layers.".to_string()
+    } else {
+        layers
+            .iter()
+            .map(|layer| {
+                let state = if layer.visible { "shown" } else { "hidden" };
+                format!("{state:<6}  {}", layer.name)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(Inspected {
+        title: "Layers".into(),
+        body,
+        summary: format!("{} layer(s)", layers.len()),
+    })
 }
 
 fn signatures_report(document: &Document) -> Result<Inspected> {

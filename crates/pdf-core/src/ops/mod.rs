@@ -95,5 +95,6 @@ pub use to_markdown::{to_markdown, MarkdownOptions};
 
 pub use articles::{list_articles, Article};
 pub use attachments::{add_attachment, extract_attachment, list_attachments, Attachment};
+pub use bookmark::{move_bookmark, remove_bookmark};
 pub use layers::{list_layers, set_layer_visibility, Layer};
 pub use page_labels::{page_labels, set_page_labels, LabelRange, LabelStyle};

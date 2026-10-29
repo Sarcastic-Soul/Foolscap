@@ -922,6 +922,8 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("attach", |app| app.attach_file()),
         ("layers", |app| app.layers()),
         ("page-labels", |app| app.page_labels()),
+        ("list-attachments", |app| app.list_attachments()),
+        ("list-layers", |app| app.list_layers()),
         // The compare view.
         ("compare-open-left", |app| {
             app.choose_file_for_compare(ComparisonSide::Left)

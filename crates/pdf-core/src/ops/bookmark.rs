@@ -76,6 +76,59 @@ pub fn add_bookmark(doc: &mut Document, bookmark: Bookmark, parent: usize) -> Re
     write_outline(doc, &tree)
 }
 
+/// Remove the bookmark printed as `index` by `foolscap bookmark list`, along
+/// with everything nested under it. Returns the removed bookmark.
+pub fn remove_bookmark(doc: &mut Document, index: usize) -> Result<Bookmark> {
+    let mut tree = list_bookmarks(doc)?;
+    let path = locate(&tree, index)?;
+    let removed =
+        siblings_mut(&mut tree, &path).remove(*path.last().expect("a path is never empty"));
+    write_outline(doc, &tree)?;
+    Ok(removed)
+}
+
+/// Move the bookmark printed as `index` one place up or down among its
+/// siblings. Returns `false`, changing nothing, when it is already at that end.
+pub fn move_bookmark(doc: &mut Document, index: usize, up: bool) -> Result<bool> {
+    let mut tree = list_bookmarks(doc)?;
+    let path = locate(&tree, index)?;
+    let position = *path.last().expect("a path is never empty");
+    let siblings = siblings_mut(&mut tree, &path);
+    let target = if up {
+        position.checked_sub(1)
+    } else {
+        Some(position + 1).filter(|next| *next < siblings.len())
+    };
+    let Some(target) = target.filter(|next| *next < siblings.len()) else {
+        return Ok(false);
+    };
+    siblings.swap(position, target);
+    write_outline(doc, &tree)?;
+    Ok(true)
+}
+
+/// The path of child positions, top level first, to the bookmark printed as `index`.
+fn locate(tree: &[Bookmark], index: usize) -> Result<Vec<usize>> {
+    let mut seen = 0;
+    let Some(mut path) = path_to_index(tree, index, &mut seen) else {
+        return Err(PdfError::Internal(format!(
+            "no bookmark numbered {index}; the outline has {seen} item(s)"
+        )));
+    };
+    // The recursion returns the path leaf-first.
+    path.reverse();
+    Ok(path)
+}
+
+/// The sibling list that holds the bookmark at the end of `path`.
+fn siblings_mut<'a>(tree: &'a mut Vec<Bookmark>, path: &[usize]) -> &'a mut Vec<Bookmark> {
+    let mut list = tree;
+    for step in &path[..path.len() - 1] {
+        list = &mut list[*step].children;
+    }
+    list
+}
+
 /// Read the outline tree, shaped for JSON export.
 pub fn export_bookmarks(doc: &Document) -> Result<Vec<Bookmark>> {
     list_bookmarks(doc)

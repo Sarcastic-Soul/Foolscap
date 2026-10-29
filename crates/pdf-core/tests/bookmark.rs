@@ -599,3 +599,71 @@ fn bookmarks_can_be_added_to_an_existing_producer_outline() {
     ];
     assert_same_tree(&listed, &expected);
 }
+
+// ------------------------------------------------- remove and move (printed order)
+
+fn titles(tree: &[Bookmark]) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(tree: &[Bookmark], out: &mut Vec<String>) {
+        for node in tree {
+            out.push(node.title.clone());
+            walk(&node.children, out);
+        }
+    }
+    walk(tree, &mut out);
+    out
+}
+
+#[test]
+fn removing_a_bookmark_takes_its_children_with_it() {
+    let (workspace, path) = plain_document("remove.pdf", 6);
+    let mut doc = open(&path);
+    for top in sample_tree() {
+        add_bookmark(&mut doc, top, 0).unwrap();
+    }
+    // Printed order: Cover 0, Inside cover 1, Chapter 1 2 (with children below it).
+    let removed = pdf_core::remove_bookmark(&mut doc, 2).unwrap();
+    assert_eq!(removed.title, "Chapter 1");
+
+    let saved = workspace.join("removed.pdf");
+    doc.save(&saved).unwrap();
+    let listed = list_bookmarks(&open(&saved)).unwrap();
+    assert_eq!(titles(&listed), vec!["Cover", "Inside cover", "Chapter 2"]);
+}
+
+#[test]
+fn moving_a_bookmark_swaps_it_with_its_sibling() {
+    let (workspace, path) = plain_document("move.pdf", 6);
+    let mut doc = open(&path);
+    for top in sample_tree() {
+        add_bookmark(&mut doc, top, 0).unwrap();
+    }
+    // Printed order puts "Chapter 2" last, at index 6. Moving it up swaps it with "Chapter 1".
+    let chapter_two = 6;
+    assert!(pdf_core::move_bookmark(&mut doc, chapter_two, true).unwrap());
+    let saved = workspace.join("moved.pdf");
+    doc.save(&saved).unwrap();
+
+    let listed = list_bookmarks(&open(&saved)).unwrap();
+    let top: Vec<&str> = listed.iter().map(|node| node.title.as_str()).collect();
+    assert_eq!(top, vec!["Cover", "Chapter 2", "Chapter 1"]);
+}
+
+#[test]
+fn moving_past_the_end_changes_nothing() {
+    let (_workspace, path) = plain_document("edge.pdf", 6);
+    let mut doc = open(&path);
+    for top in sample_tree() {
+        add_bookmark(&mut doc, top, 0).unwrap();
+    }
+    // "Cover" is first, so moving it up does nothing.
+    assert!(!pdf_core::move_bookmark(&mut doc, 0, true).unwrap());
+}
+
+#[test]
+fn an_unknown_index_is_an_error() {
+    let (_workspace, path) = plain_document("missing.pdf", 6);
+    let mut doc = open(&path);
+    add_bookmark(&mut doc, bookmark("Only", 1), 0).unwrap();
+    assert!(pdf_core::remove_bookmark(&mut doc, 9).is_err());
+}

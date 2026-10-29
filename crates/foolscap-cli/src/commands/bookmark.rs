@@ -41,6 +41,22 @@ enum Command {
         parent: usize,
     },
 
+    /// Remove a bookmark and everything nested under it.
+    Remove {
+        /// The bookmark's number, as `list` prints it.
+        index: usize,
+    },
+
+    /// Move a bookmark up or down among its siblings.
+    Move {
+        /// The bookmark's number, as `list` prints it.
+        index: usize,
+
+        /// `up` or `down`.
+        #[arg(value_parser = ["up", "down"])]
+        direction: String,
+    },
+
     /// Import bookmarks from a JSON file, replacing existing ones.
     Import {
         /// JSON file containing bookmarks to import.
@@ -63,6 +79,10 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
             page,
             parent,
         } => run_add(&args, title.clone(), *page, *parent, force, password),
+        Command::Remove { index } => run_remove(&args, *index, force, password),
+        Command::Move { index, direction } => {
+            run_move(&args, *index, direction == "up", force, password)
+        }
         Command::Import { file } => run_import(&args, file.clone(), force, password),
         Command::Export { output } => run_export(&args, output.clone(), force, password),
     }
@@ -156,6 +176,46 @@ fn run_import(args: &Args, file: PathBuf, force: bool, password: Option<&str>) -
     Ok(())
 }
 
+fn run_remove(args: &Args, index: usize, force: bool, password: Option<&str>) -> Result<()> {
+    let output = args
+        .output
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("--output is required for remove"))?;
+    guard_output(output, force)?;
+
+    let mut doc = Document::open_with(&args.input, password)?;
+    let removed = pdf_core::remove_bookmark(&mut doc, index)?;
+    doc.save(output)?;
+    println!("removed \"{}\"", removed.title);
+    println!("{}", output.display());
+    Ok(())
+}
+
+fn run_move(
+    args: &Args,
+    index: usize,
+    up: bool,
+    force: bool,
+    password: Option<&str>,
+) -> Result<()> {
+    let output = args
+        .output
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("--output is required for move"))?;
+    guard_output(output, force)?;
+
+    let mut doc = Document::open_with(&args.input, password)?;
+    if !pdf_core::move_bookmark(&mut doc, index, up)? {
+        bail!(
+            "bookmark {index} is already at the {} of its level",
+            if up { "top" } else { "bottom" }
+        );
+    }
+    doc.save(output)?;
+    println!("{}", output.display());
+    Ok(())
+}
+
 fn run_export(
     args: &Args,
     output: Option<PathBuf>,
@@ -167,7 +227,8 @@ fn run_export(
 
     let json = serde_json::to_string_pretty(&bookmarks)?;
 
-    match output {
+    // `-o` is accepted before or after `export`; the one after wins if both appear.
+    match output.or_else(|| args.output.clone()) {
         Some(path) => {
             guard_output(&path, force)?;
             std::fs::write(&path, json)?;

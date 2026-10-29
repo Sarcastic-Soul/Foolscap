@@ -171,7 +171,8 @@ impl App {
         });
     }
 
-    /// Add one outline entry, optionally nested under an existing one.
+    /// Add, remove, or move a bookmark. The numbers are the ones
+    /// `foolscap bookmark FILE list` prints.
     pub(super) fn bookmarks(self: &Rc<Self>) {
         if !self.require_document_queued() {
             return;
@@ -180,47 +181,62 @@ impl App {
 
         show_form(
             &self.ui.window,
-            "Add a bookmark",
+            "Bookmarks",
             "Choose where to save…",
             |fields| {
+                let mode = dropdown(&["Add", "Remove", "Move up", "Move down"]);
                 let title = gtk4::Entry::new();
                 title.set_placeholder_text(Some("Chapter 1"));
                 let page = gtk4::Entry::new();
                 page.set_text("1");
                 let parent = gtk4::Entry::new();
                 parent.set_text("0");
-                fields.add("Title", &title);
-                fields.add("Page", &page);
-                fields.add("Nest under", &parent);
+                let index = gtk4::Entry::new();
+                index.set_text("0");
+                fields.add("Action", &mode);
+                fields.add("Title (add)", &title);
+                fields.add("Page (add)", &page);
+                fields.add("Nest under (add)", &parent);
+                fields.add("Bookmark number", &index);
                 fields.note(
-                    "Nest under 0 for the top level. A number N nests under the N-th entry \
-                     in the order the CLI's bookmark list prints them.",
+                    "Adding uses the title, page and parent. Remove and move use the \
+                     bookmark number. Nest under 0 is the top level.",
                 );
-                Box::new(move || {
-                    let title = title.text().trim().to_string();
-                    if title.is_empty() {
-                        return Err("Enter a title for the bookmark.".to_string());
+                Box::new(move || match mode.selected() {
+                    0 => {
+                        let title = title.text().trim().to_string();
+                        if title.is_empty() {
+                            return Err("Enter a title for the bookmark.".to_string());
+                        }
+                        let page: usize = number(&page, "the page number")?;
+                        if page == 0 || page > count {
+                            return Err(format!("The page must be between 1 and {count}."));
+                        }
+                        let parent: usize = number(&parent, "the parent number")?;
+                        Ok(Transform::Bookmark {
+                            title,
+                            page: page - 1,
+                            parent,
+                        })
                     }
-                    let page: usize = number(&page, "the page number")?;
-                    if page == 0 || page > count {
-                        return Err(format!("The page must be between 1 and {count}."));
-                    }
-                    let parent: usize = number(&parent, "the parent number")?;
-                    Ok((title, page - 1, parent))
+                    1 => Ok(Transform::RemoveBookmark(number(
+                        &index,
+                        "the bookmark number",
+                    )?)),
+                    choice => Ok(Transform::MoveBookmark {
+                        index: number(&index, "the bookmark number")?,
+                        up: choice == 2,
+                    }),
                 })
             },
             clone!(
                 #[strong(rename_to = app)]
                 self,
-                move |(title, page, parent): (String, usize, usize)| {
-                    app.write_pdf_job("-bookmarked", "Add bookmark", move |path, edits, job_id| {
+                move |transform: Transform| {
+                    app.write_pdf_job("-bookmarked", "Bookmarks", move |path, edits, job_id| {
                         Request::Transform {
                             path,
-                            transform: Transform::Bookmark {
-                                title,
-                                page,
-                                parent,
-                            },
+                            transform,
                             edits,
                             job_id,
                         }
@@ -723,5 +739,33 @@ impl App {
                 }
             ),
         );
+    }
+}
+
+impl App {
+    /// List the embedded files of the open document.
+    pub(super) fn list_attachments(self: &Rc<Self>) {
+        if !self.require_document_queued() {
+            return;
+        }
+        self.submit("List attachments", "the open document".into(), |job_id| {
+            Request::Inspect {
+                which: Inspection::Attachments,
+                job_id,
+            }
+        });
+    }
+
+    /// List the optional content layers of the open document.
+    pub(super) fn list_layers(self: &Rc<Self>) {
+        if !self.require_document_queued() {
+            return;
+        }
+        self.submit("List layers", "the open document".into(), |job_id| {
+            Request::Inspect {
+                which: Inspection::Layers,
+                job_id,
+            }
+        });
     }
 }

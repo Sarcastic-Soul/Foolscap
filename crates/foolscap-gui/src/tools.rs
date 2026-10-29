@@ -47,6 +47,8 @@ pub enum ToolId {
     Attach,
     Layers,
     PageLabels,
+    ListAttachments,
+    ListLayers,
 }
 
 impl ToolId {
@@ -88,6 +90,8 @@ impl ToolId {
             ToolId::Attach => "attach",
             ToolId::Layers => "layers",
             ToolId::PageLabels => "page-labels",
+            ToolId::ListAttachments => "list-attachments",
+            ToolId::ListLayers => "list-layers",
         }
     }
 }
@@ -469,6 +473,20 @@ pub const TOOLS: &[Tool] = &[
         "format-text-rich-symbolic",
         Needs::NONE.document(),
     ),
+    tool(
+        ToolId::ListAttachments,
+        "List attachments",
+        "Files embedded in the PDF",
+        "mail-attachment-symbolic",
+        Needs::NONE.document(),
+    ),
+    tool(
+        ToolId::ListLayers,
+        "List layers",
+        "Which layers are shown",
+        "view-list-ordered-symbolic",
+        Needs::NONE.document(),
+    ),
 ];
 
 /// Find a tool by its window action name.
@@ -541,6 +559,8 @@ mod tests {
             ToolId::Attach,
             ToolId::Layers,
             ToolId::PageLabels,
+            ToolId::ListAttachments,
+            ToolId::ListLayers,
         ] {
             assert!(ids.contains(&required), "missing {required:?}");
         }

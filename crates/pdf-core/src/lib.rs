@@ -57,7 +57,9 @@ pub use ops::{
 #[cfg(feature = "convert")]
 pub use ops::{qr_code, QrEcc, QrOptions};
 #[cfg(feature = "signatures")]
-pub use ops::{verify_signatures, SignatureReport};
+pub use ops::{
+    system_trust_roots, verify_signatures, verify_signatures_against, SignatureReport, Trust,
+};
 pub use pages::PageRange;
 pub use progress::{Progress, ProgressFn};
 #[cfg(feature = "render")]

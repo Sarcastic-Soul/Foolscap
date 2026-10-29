@@ -9,29 +9,15 @@ use crate::progress::{Progress, ProgressFn};
 #[cfg(feature = "render")]
 use mupdf::{Document as MuPdfDocument, Matrix};
 
-/// How to handle fonts in the SVG output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontEmbedding {
-    /// Reference fonts by name only (smallest file, requires fonts on viewer system).
-    Reference,
-    /// Subset and embed only the glyphs used (recommended default).
-    #[default]
-    Subset,
-    /// Embed full font files (largest file, maximum portability).
-    None,
-}
-
 /// Options for [`to_svg`].
+///
+/// Text is always written as paths. The MuPDF wrapper this crate uses exposes
+/// no switch for keeping text as selectable text, so the SVG output is not
+/// searchable.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvgOptions {
     /// Page range to convert.
     pub pages: PageRange,
-    /// Font embedding strategy. Not applied yet: the output is always what
-    /// MuPDF's SVG writer produces, whatever this is set to.
-    pub font_embedding: FontEmbedding,
-    /// Convert text to vector paths instead of keeping it as selectable text.
-    /// Not applied yet, for the same reason as `font_embedding`.
-    pub text_as_paths: bool,
     /// Password for an encrypted input, used only if the file needs one.
     pub password: Option<String>,
 }
@@ -40,8 +26,6 @@ impl Default for SvgOptions {
     fn default() -> Self {
         Self {
             pages: PageRange::All,
-            font_embedding: FontEmbedding::Subset,
-            text_as_paths: false,
             password: None,
         }
     }
@@ -168,9 +152,8 @@ fn render_page_to_svg(doc: &MuPdfDocument, page_index: usize) -> Result<String> 
         .to_svg(&matrix)
         .map_err(|source| mupdf_error_from_doc(doc, source))?;
 
-    // TODO: Post-process SVG for font embedding options and text_as_paths
-    // For now, mupdf's to_svg() returns a basic SVG. Font embedding and
-    // text-as-paths would require additional processing or MuPDF options.
+    // MuPDF's to_svg() writes text as paths. The wrapper offers no option to
+    // change that, so there is nothing to post-process here.
 
     Ok(svg)
 }

@@ -28,7 +28,6 @@ pub fn run(args: Args, force: bool, password: Option<&str>) -> Result<()> {
     let options = SvgOptions {
         pages: pages.unwrap_or(PageRange::All),
         password: password.map(str::to_string),
-        ..SvgOptions::default()
     };
 
     // The plan says what would be written; guard every path before any of it

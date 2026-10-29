@@ -33,7 +33,7 @@ zip = "2"
 qrcodegen = "1"
 # Signature verification (MIT or Apache-2.0, AGPL-compatible). sha1 backs the
 # legacy adbe.pkcs7.sha1 sub-filter; everything newer uses the SHA-2 family.
-x509-parser = "0.16"
+x509-parser = { version = "0.16", features = ["verify"] }
 sha1 = "0.10"
 sha2 = "0.10"
 rsa = "0.9"

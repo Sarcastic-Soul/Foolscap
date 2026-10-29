@@ -26,9 +26,16 @@
 //!    resting on the digest match alone, and the reason says the algorithm
 //!    was not verified.
 //!
-//! Chain-of-trust validation against a trust store is out of scope by design;
-//! every report's reason states that it was not checked, so a caller can never
-//! mistake "the bytes are as signed" for "the signer is trustworthy".
+//! Chain-of-trust: the signer's certificate is followed through the certificates
+//! carried in the CMS and then matched against a set of trusted root
+//! certificates, by default the system CA bundle. Each link is checked with
+//! the issuer's public key. Validity periods are not checked, so a report can
+//! say a chain reaches a trusted root while the certificate has since expired.
+//! Revocation (CRL, OCSP) is not checked either.
+//!
+//! Every report also says whether the chain reached a trusted root. Integrity
+//! (`intact`) and trust are separate: a valid signature from an unknown signer
+//! is intact but untrusted.
 //!
 //! Everything reportable is reported rather than raised: a document with no
 //! signature fields yields an empty `Vec`, and an unreadable `/V` yields one
@@ -52,9 +59,14 @@ use crate::text;
 /// How deeply to follow `/Kids` before deciding a form is malformed.
 const MAX_DEPTH: usize = 32;
 
-/// The note every report carries: this build does not validate certificates
-/// against a trust store.
+/// The note every report carries when the chain was not reached.
 const NO_CHAIN_NOTE: &str = "certificate chain-of-trust was NOT checked";
+
+/// How many certificates to follow from the signer to a root.
+const MAX_CHAIN_DEPTH: usize = 10;
+
+/// The system trust store, a PEM bundle of root certificates.
+const SYSTEM_TRUST_BUNDLE: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 /// The result of DER walking: a failure message for the report, never a
 /// `PdfError`, because an unparseable signature is a report, not an error.
@@ -87,19 +99,64 @@ pub struct SignatureReport {
     /// signature held (or no supported algorithm could check it, in which
     /// case the digest match alone carries the verdict).
     pub intact: bool,
+    /// Whether the signer's certificate chains to a trusted root. `None`
+    /// when the chain was never reached, because an earlier check failed.
+    pub trust: Option<Trust>,
     /// Human-readable detail: what was checked, what mismatched, and the
-    /// standing note that the chain-of-trust was not.
+    /// chain-of-trust result.
     pub reason: String,
 }
 
-/// Inspect every signature in the document.
+/// Whether a signer's certificate chains to a trusted root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trust {
+    /// Every link verifies and the chain ends at a trusted root.
+    Trusted,
+    /// The chain does not reach a trusted root. The string says where it stopped.
+    Untrusted(String),
+}
+
+/// Inspect every signature in the document, checking chains against the
+/// system CA bundle.
 ///
 /// A document with no signature fields is not an error: the result is empty.
 pub fn verify_signatures(doc: &Document) -> Result<Vec<SignatureReport>> {
+    verify_signatures_against(doc, &system_trust_roots())
+}
+
+/// The DER of every certificate in the system CA bundle. A missing or
+/// unreadable bundle yields none, and every chain then reports as untrusted.
+pub fn system_trust_roots() -> Vec<Vec<u8>> {
+    match std::fs::read(SYSTEM_TRUST_BUNDLE) {
+        Ok(pem) => x509_parser::pem::Pem::iter_from_buffer(&pem)
+            .filter_map(|block| block.ok())
+            .map(|block| block.contents)
+            .collect(),
+        Err(reason) => {
+            tracing::warn!("cannot read {SYSTEM_TRUST_BUNDLE}: {reason}");
+            Vec::new()
+        }
+    }
+}
+
+/// [`verify_signatures`] with the trusted roots given as DER certificates.
+pub fn verify_signatures_against(
+    doc: &Document,
+    trusted_roots_der: &[Vec<u8>],
+) -> Result<Vec<SignatureReport>> {
     let fields = collect_fields(&doc.inner);
     if fields.is_empty() {
         return Ok(Vec::new());
     }
+
+    let roots: Vec<X509Certificate<'_>> = trusted_roots_der
+        .iter()
+        .filter_map(|der| {
+            x509_parser::parse_x509_certificate(der)
+                .ok()
+                .map(|(_, cert)| cert)
+        })
+        .collect();
 
     // Byte-range offsets refer to the file as signed, so the original bytes
     // are needed, not the parsed objects: an incremental update or a spliced
@@ -126,7 +183,7 @@ pub fn verify_signatures(doc: &Document) -> Result<Vec<SignatureReport>> {
 
     Ok(fields
         .into_iter()
-        .map(|field| verify_one(&bytes, field))
+        .map(|field| verify_one(&bytes, field, &roots))
         .collect())
 }
 
@@ -375,7 +432,7 @@ fn name_entry(dict: &Dictionary, key: &[u8]) -> Option<String> {
 // ------------------------------------------------------------- verification
 
 /// Verify one field against the file it was signed over.
-fn verify_one(bytes: &[u8], field: Field) -> SignatureReport {
+fn verify_one(bytes: &[u8], field: Field, roots: &[X509Certificate<'_>]) -> SignatureReport {
     let mut report = field.report();
 
     if let Some(failure) = &field.failure {
@@ -497,6 +554,14 @@ fn verify_one(bytes: &[u8], field: Field) -> SignatureReport {
     };
 
     let digest_checked = digest_check.is_some();
+    let trust = match certificate {
+        Some((cert, _)) => {
+            let carried: Vec<&X509Certificate<'_>> =
+                cms.certs.iter().map(|(carried, _)| carried).collect();
+            chain_trust(cert, &carried, roots)
+        }
+        None => Trust::Untrusted("the CMS carries no certificate for the signer".into()),
+    };
     let mut notes = Vec::new();
     match digest_check {
         Some((true, note)) => notes.push(note),
@@ -525,9 +590,63 @@ fn verify_one(bytes: &[u8], field: Field) -> SignatureReport {
         SignatureOutcome::NotChecked(_) => digest_checked,
     };
 
-    notes.push(NO_CHAIN_NOTE.to_string());
+    notes.push(match &trust {
+        Trust::Trusted => "certificate chain reaches a trusted root".to_string(),
+        Trust::Untrusted(why) => format!("certificate chain NOT trusted: {why}"),
+    });
+    report.trust = Some(trust);
     report.reason = notes.join("; ");
     report
+}
+
+/// Follow the signer's certificate up to a trusted root.
+///
+/// Issuers are looked for among the trusted roots and the certificates the
+/// CMS carried. Each link must verify under its issuer's key. The walk stops
+/// at the first root it reaches, or fails at the first link no issuer covers.
+fn chain_trust(
+    signer: &X509Certificate<'_>,
+    carried: &[&X509Certificate<'_>],
+    roots: &[X509Certificate<'_>],
+) -> Trust {
+    let same = |a: &X509Certificate<'_>, b: &X509Certificate<'_>| {
+        a.tbs_certificate.as_ref() == b.tbs_certificate.as_ref()
+    };
+    let is_root = |cert: &X509Certificate<'_>| roots.iter().any(|root| same(root, cert));
+
+    let mut current = signer;
+    for _ in 0..MAX_CHAIN_DEPTH {
+        if is_root(current) {
+            return Trust::Trusted;
+        }
+
+        let issuer = roots
+            .iter()
+            .chain(carried.iter().copied())
+            .find(|candidate| {
+                candidate.subject() == current.issuer()
+                    && !same(candidate, current)
+                    && current
+                        .verify_signature(Some(candidate.public_key()))
+                        .is_ok()
+            });
+
+        match issuer {
+            None => {
+                return Trust::Untrusted(format!(
+                    "{} is not issued by any trusted root certificate",
+                    common_name(current.subject()).unwrap_or_else(|| "the signer".into())
+                ))
+            }
+            // Reaching a root that issued the current link ends the walk.
+            Some(issuer) if is_root(issuer) => return Trust::Trusted,
+            Some(issuer) => current = issuer,
+        }
+    }
+
+    Trust::Untrusted(format!(
+        "the certificate chain is longer than {MAX_CHAIN_DEPTH} certificates"
+    ))
 }
 
 /// What the cryptographic verification of one signature concluded.
@@ -540,8 +659,8 @@ enum SignatureOutcome {
 
 /// Copy the signer certificate's details into the report.
 fn fill_certificate_details(report: &mut SignatureReport, cert: &X509Certificate<'_>) {
-    if report.signer.is_none() {
-        report.signer = common_name(cert.subject());
+    if let Some(name) = common_name(cert.subject()) {
+        report.signer = Some(name);
     }
     report.issuer = common_name(cert.issuer());
     report.valid_from = format_asn1_time(cert.validity().not_before.timestamp());

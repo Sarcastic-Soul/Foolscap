@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 
 use common::{Attributes, Workspace, A4};
 use lopdf::{dictionary, Document, Object, StringFormat};
-use pdf_core::verify_signatures;
+use pdf_core::{verify_signatures, verify_signatures_against, Trust};
 use rsa::pkcs1v15::Pkcs1v15Sign;
 use rsa::rand_core::{CryptoRng, RngCore};
 use rsa::traits::PublicKeyParts;
@@ -248,6 +248,83 @@ fn signer() -> &'static Signer {
     })
 }
 
+/// A certificate for `subject_key`, issued under `issuer` and signed with
+/// `issuer_key`: a v3 TBS valid 2026 through 2030.
+fn issue_certificate(
+    subject: &[u8],
+    subject_key: &RsaPrivateKey,
+    issuer: &[u8],
+    issuer_key: &RsaPrivateKey,
+    serial: &[u8],
+) -> Vec<u8> {
+    let rsa_public = tlv(
+        0x30,
+        &[
+            integer(&subject_key.n().to_bytes_be()),
+            integer(&subject_key.e().to_bytes_be()),
+        ]
+        .concat(),
+    );
+    let spki = tlv(0x30, &[algid(OID_RSA), bit_string(&rsa_public)].concat());
+    let validity = tlv(
+        0x30,
+        &[tlv(0x17, b"260101000000Z"), tlv(0x17, b"301231235959Z")].concat(),
+    );
+
+    let mut tbs = Vec::new();
+    tbs.extend(tlv(0xA0, &integer(&[2]))); // [0] EXPLICIT version: v3
+    tbs.extend(integer(serial));
+    tbs.extend(algid(OID_SHA256_RSA));
+    tbs.extend(issuer);
+    tbs.extend(validity);
+    tbs.extend(subject);
+    tbs.extend(spki);
+    let tbs = tlv(0x30, &tbs);
+
+    let mut digest_info = SHA256_PREFIX.to_vec();
+    digest_info.extend_from_slice(&Sha256::digest(&tbs));
+    let signature = issuer_key
+        .sign(Pkcs1v15Sign::new_unprefixed(), &digest_info)
+        .expect("the fixture certificate signs");
+    tlv(
+        0x30,
+        &[tbs, algid(OID_SHA256_RSA), bit_string(&signature)].concat(),
+    )
+}
+
+/// A two-level chain: a self-signed root, and a leaf that the root issued.
+/// The leaf's key signs the CMS.
+struct Chain {
+    /// The root certificate's DER.
+    ca_der: Vec<u8>,
+    /// The signer: the leaf key and certificate, issued by the root.
+    leaf: Signer,
+}
+
+fn chain() -> &'static Chain {
+    static CHAIN: OnceLock<Chain> = OnceLock::new();
+    CHAIN.get_or_init(|| {
+        let mut rng = FixtureRng(0x9E37_79B9_7F4A_7C15);
+        let ca_key = RsaPrivateKey::new(&mut rng, 2048).expect("could not generate the CA key");
+        let leaf_key = RsaPrivateKey::new(&mut rng, 2048).expect("could not generate the leaf key");
+
+        let ca_name = name_cn("Foolscap Fixture Root");
+        let leaf_name = name_cn("Foolscap Fixture Leaf");
+        let ca_der = issue_certificate(&ca_name, &ca_key, &ca_name, &ca_key, &[0x01]);
+        let leaf_der = issue_certificate(&leaf_name, &leaf_key, &ca_name, &ca_key, &[0x02]);
+
+        Chain {
+            ca_der,
+            leaf: Signer {
+                key: leaf_key,
+                cert_der: leaf_der,
+                issuer_der: ca_name,
+                serial_der: integer(&[0x02]),
+            },
+        }
+    })
+}
+
 /// Build the CMS `SignedData` for a fixture under `plan`.
 fn build_cms(signer: &Signer, digest: &[u8], plan: &Plan) -> Vec<u8> {
     let (digest_alg, signature_alg, prefix) = match plan {
@@ -465,7 +542,17 @@ fn signed_pdf(
     sub_filter: &str,
     plan: Plan,
 ) -> std::path::PathBuf {
-    let signer = signer();
+    signed_pdf_with(workspace, name, sub_filter, plan, signer())
+}
+
+/// As [`signed_pdf`], signed by `signer`.
+fn signed_pdf_with(
+    workspace: &Workspace,
+    name: &str,
+    sub_filter: &str,
+    plan: Plan,
+    signer: &Signer,
+) -> std::path::PathBuf {
     let (mut bytes, hole) = save_with_byte_range(&mut placeholder_pdf(sub_filter));
 
     let spans = signed_spans(&bytes, &hole);
@@ -702,7 +789,7 @@ fn an_rsa_signed_document_verifies() {
         "{}",
         report.reason
     );
-    assert!(report.reason.contains("chain-of-trust was NOT checked"));
+    assert!(report.reason.contains("certificate chain NOT trusted"));
 }
 
 #[test]
@@ -783,4 +870,131 @@ fn a_legacy_sha1_signature_with_encapsulated_digest_verifies() {
         "{}",
         reports[0].reason
     );
+}
+
+#[test]
+fn a_self_signed_signer_outside_the_store_is_intact_but_untrusted() {
+    let workspace = Workspace::new();
+    let path = signed_pdf(
+        &workspace,
+        "untrusted.pdf",
+        "adbe.pkcs7.detached",
+        Plan::Detached,
+    );
+    let doc = pdf_core::Document::open(&path).unwrap();
+
+    let reports = verify_signatures_against(&doc, &[]).unwrap();
+    let report = &reports[0];
+    assert!(report.intact, "the report's reason: {}", report.reason);
+    assert!(
+        matches!(&report.trust, Some(Trust::Untrusted(why)) if why.contains("not issued by any trusted root")),
+        "{:?}",
+        report.trust
+    );
+    assert!(report.reason.contains("certificate chain NOT trusted"));
+}
+
+#[test]
+fn a_signer_listed_as_a_trusted_root_is_trusted() {
+    let workspace = Workspace::new();
+    let path = signed_pdf(
+        &workspace,
+        "trusted.pdf",
+        "adbe.pkcs7.detached",
+        Plan::Detached,
+    );
+    let doc = pdf_core::Document::open(&path).unwrap();
+
+    let roots = vec![signer().cert_der.clone()];
+    let reports = verify_signatures_against(&doc, &roots).unwrap();
+    let report = &reports[0];
+    assert!(report.intact, "the report's reason: {}", report.reason);
+    assert_eq!(report.trust, Some(Trust::Trusted), "{}", report.reason);
+    assert!(report
+        .reason
+        .contains("certificate chain reaches a trusted root"));
+}
+
+#[test]
+fn a_signer_issued_by_a_trusted_root_is_trusted_through_it() {
+    let workspace = Workspace::new();
+    let fixture = chain();
+    let path = signed_pdf_with(
+        &workspace,
+        "chained.pdf",
+        "adbe.pkcs7.detached",
+        Plan::Detached,
+        &fixture.leaf,
+    );
+    let doc = pdf_core::Document::open(&path).unwrap();
+
+    let roots = vec![fixture.ca_der.clone()];
+    let reports = verify_signatures_against(&doc, &roots).unwrap();
+    let report = &reports[0];
+    assert!(report.intact, "the report's reason: {}", report.reason);
+    assert_eq!(report.signer.as_deref(), Some("Foolscap Fixture Leaf"));
+    assert_eq!(report.issuer.as_deref(), Some("Foolscap Fixture Root"));
+    assert_eq!(report.trust, Some(Trust::Trusted), "{}", report.reason);
+}
+
+#[test]
+fn a_signer_whose_issuer_is_not_trusted_is_not_trusted() {
+    let workspace = Workspace::new();
+    let fixture = chain();
+    let path = signed_pdf_with(
+        &workspace,
+        "chained-untrusted.pdf",
+        "adbe.pkcs7.detached",
+        Plan::Detached,
+        &fixture.leaf,
+    );
+    let doc = pdf_core::Document::open(&path).unwrap();
+
+    // The only root is an unrelated self-signed certificate, so the leaf's
+    // issuer is never reached.
+    let roots = vec![signer().cert_der.clone()];
+    let reports = verify_signatures_against(&doc, &roots).unwrap();
+    let report = &reports[0];
+    assert!(report.intact, "the report's reason: {}", report.reason);
+    assert!(
+        matches!(&report.trust, Some(Trust::Untrusted(why)) if why.starts_with("Foolscap Fixture Leaf")),
+        "{:?}",
+        report.trust
+    );
+}
+
+#[test]
+fn a_tampered_document_reports_no_trust_verdict() {
+    let workspace = Workspace::new();
+    let path = signed_pdf(
+        &workspace,
+        "tampered-trust.pdf",
+        "adbe.pkcs7.detached",
+        Plan::Detached,
+    );
+    tamper(&path);
+    let doc = pdf_core::Document::open(&path).unwrap();
+
+    let roots = vec![signer().cert_der.clone()];
+    let reports = verify_signatures_against(&doc, &roots).unwrap();
+    let report = &reports[0];
+    assert!(!report.intact);
+    // The digest failed before the chain was reached, so trust was not decided.
+    assert_eq!(report.trust, None);
+}
+
+#[test]
+fn a_garbage_root_is_ignored_rather_than_trusted() {
+    let workspace = Workspace::new();
+    let path = signed_pdf(
+        &workspace,
+        "garbage-root.pdf",
+        "adbe.pkcs7.detached",
+        Plan::Detached,
+    );
+    let doc = pdf_core::Document::open(&path).unwrap();
+
+    let roots = vec![b"not a certificate".to_vec()];
+    let reports = verify_signatures_against(&doc, &roots).unwrap();
+    assert!(matches!(reports[0].trust, Some(Trust::Untrusted(_))));
 }

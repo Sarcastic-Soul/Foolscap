@@ -51,10 +51,47 @@ build-options:
     LIBCLANG_PATH: /usr/lib/sdk/llvm20/lib
 
 modules:
-  # LibreOffice and Tesseract are invoked as subprocesses. Inside a Flatpak
-  # they are not on PATH, so the office and OCR commands report them as
-  # missing rather than failing obscurely. Bundling LibreOffice would multiply
-  # the download size; the intent is to add Tesseract as a module here.
+  # Tesseract for OCR. Built from the same pinned sources that were verified
+  # by hand against a rendered page on the host. Installed under /app, so it
+  # lands on the sandbox PATH and its default tessdata directory,
+  # /app/share/tessdata, is found without extra environment.
+  - name: leptonica
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_PROG=OFF
+      - -DBUILD_SHARED_LIBS=ON
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: archive
+        url: https://github.com/DanBloomberg/leptonica/archive/refs/tags/1.87.0.tar.gz
+        sha256: fa2b40c5caea96d1bb93a97486262aed8731b69ce25a84a6bf5d25323e33f631
+
+  - name: tesseract
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_TRAINING_TOOLS=OFF
+      - -DBUILD_TESTS=OFF
+      - -DDISABLE_ARCHIVE=ON
+      - -DDISABLE_CURL=ON
+      - -DOPENMP_BUILD=OFF
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: archive
+        url: https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.4.tar.gz
+        sha256: a8dbf8b8c8ee427ff6ad1d99116502feaf59440af1adb893caf60a6576826cf4
+
+  # The fast English model. Other languages need their own traineddata here.
+  - name: tessdata-eng
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 eng.traineddata /app/share/tessdata/eng.traineddata
+    sources:
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/eng.traineddata
+        sha256: 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+
+  # LibreOffice is invoked as a subprocess and is not bundled: it would
+  # multiply the download size. Office conversion stays unavailable here.
   - name: foolscap
     buildsystem: simple
     build-commands:

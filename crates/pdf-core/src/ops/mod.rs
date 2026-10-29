@@ -72,7 +72,9 @@ pub use redact::{
 pub use repair::{repair, repair_loaded, repair_with, RepairReport};
 pub use rotate::rotate;
 #[cfg(feature = "signatures")]
-pub use signatures::{verify_signatures, SignatureReport};
+pub use signatures::{
+    system_trust_roots, verify_signatures, verify_signatures_against, SignatureReport, Trust,
+};
 pub use split::{
     plan as split_plan, plan_with_options as split_plan_with_options, split, split_with_options,
     split_with_progress, SplitOptions, SplitSpec,
@@ -83,6 +85,6 @@ pub use stamp::{
 };
 pub use strip::{strip, StripReport};
 #[cfg(feature = "render")]
-pub use svg::{plan, to_svg, to_svg_with_progress, FontEmbedding, SvgOptions};
+pub use svg::{plan, to_svg, to_svg_with_progress, SvgOptions};
 #[cfg(feature = "render")]
 pub use to_markdown::{to_markdown, MarkdownOptions};

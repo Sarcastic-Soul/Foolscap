@@ -50,6 +50,14 @@ pub fn run(args: Args, password: Option<&str>) -> Result<()> {
             "verdict    {}",
             if report.intact { "INTACT" } else { "BROKEN" }
         );
+        println!(
+            "trust      {}",
+            match &report.trust {
+                Some(pdf_core::Trust::Trusted) => "TRUSTED (chains to a system root)",
+                Some(pdf_core::Trust::Untrusted(_)) => "NOT TRUSTED",
+                None => "NOT CHECKED",
+            }
+        );
         println!("           {}", report.reason);
     }
 

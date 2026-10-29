@@ -59,9 +59,9 @@ The reason to have this as well as the `.deb` is that GTK4 and the vendored
 MuPDF build come from the runtime rather than from whatever the host
 distribution carries, so Fedora, Arch and Debian all behave identically.
 
-Note that LibreOffice and Tesseract are not on `PATH` inside the sandbox, so
-office conversion and OCR are unavailable in a Flatpak build until Tesseract is
-added as a module.
+Tesseract is built into the Flatpak from pinned sources (Leptonica 1.87.0,
+Tesseract 5.5.4, English `tessdata_fast` 4.1.0), so OCR works there. LibreOffice
+is not bundled, so office conversion is unavailable in the Flatpak.
 
 ### Crate sources
 
